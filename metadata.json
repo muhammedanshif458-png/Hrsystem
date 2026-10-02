@@ -1,0 +1,6 @@
+{
+  "name": "HR System",
+  "description": "Internal HR management tool for Telecalling and Tech departments with Staff and HR Manager role-based portals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

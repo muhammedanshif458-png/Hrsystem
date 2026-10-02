@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if the user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get the current user's staff record
+    function getCurrentStaff() {
+      return get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+    }
+    
+    // Helper function to verify if the requester has the 'HR Manager' role
+    function isHRManager() {
+      return isSignedIn() && (
+        (request.auth.token.role == 'HR Manager') ||
+        (exists(/databases/$(database)/documents/staff/$(request.auth.uid)) &&
+         getCurrentStaff().role == 'HR Manager')
+      );
+    }
+    
+    // Helper function to check if the requester is the owner staff member
+    function isOwner(staffId) {
+      return isSignedIn() && request.auth.uid == staffId;
+    }
+
+    // --- Staff collection ---
+    // HR Manager can read, create, update, and delete (or mark resigned).
+    // Staff can read their own profile.
+    match /staff/{staffId} {
+      allow read: if isHRManager() || isOwner(staffId);
+      allow create, update, delete: if isHRManager();
+    }
+
+    // --- Attendance collection ---
+    // HR Manager can read and write all attendance logs.
+    // Staff can read and create/update their own attendance logs.
+    match /attendance/{attendanceId} {
+      allow read: if isHRManager() || (isSignedIn() && resource.data.staff_id == request.auth.uid);
+      allow create: if isHRManager() || (isSignedIn() && request.resource.data.staff_id == request.auth.uid);
+      allow update: if isHRManager() || (isSignedIn() && resource.data.staff_id == request.auth.uid && request.resource.data.staff_id == request.auth.uid);
+      allow delete: if isHRManager();
+    }
+
+    // --- Tasks collection ---
+    // HR Manager can create, read, update, and delete tasks for any staff member.
+    // Staff can read tasks assigned to them, and update the status of their own assigned tasks.
+    match /tasks/{taskId} {
+      allow read: if isHRManager() || (isSignedIn() && resource.data.staff_id == request.auth.uid);
+      allow create, delete: if isHRManager();
+      allow update: if isHRManager() || (
+        isSignedIn() && 
+        resource.data.staff_id == request.auth.uid &&
+        // Staff can update task status (pending, in progress, done)
+        request.resource.data.staff_id == resource.data.staff_id &&
+        request.resource.data.description == resource.data.description &&
+        request.resource.data.due_date == resource.data.due_date
+      );
+    }
+
+    // --- Daily Updates collection ---
+    // HR Manager can read all daily updates.
+    // Staff can read, create, and update their own daily updates.
+    match /daily_updates/{updateId} {
+      allow read: if isHRManager() || (isSignedIn() && resource.data.staff_id == request.auth.uid);
+      allow create: if isHRManager() || (isSignedIn() && request.resource.data.staff_id == request.auth.uid);
+      allow update: if isHRManager() || (isSignedIn() && resource.data.staff_id == request.auth.uid && request.resource.data.staff_id == request.auth.uid);
+      allow delete: if isHRManager();
+    }
+  }
+}
