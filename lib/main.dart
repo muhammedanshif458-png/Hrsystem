@@ -69,7 +69,7 @@ class _AppPagesState extends State<_AppPages> {
           final staff = await _repository.signIn(email, password);
           if (staff.role != Role.staff) {
             _repository.signOut();
-            throw Exception('Please sign in through the HR portal.');
+            throw Exception('Not a staff account.');
           }
           await _repository.recordStaffSignIn(StaffSignInRecord(
             staffId: staff.id,
@@ -82,8 +82,12 @@ class _AppPagesState extends State<_AppPages> {
             locationAddress:
                 workMode == 'Work From Home' ? location?.address : null,
           ));
+          final effectiveDept = (staff.department.isNotEmpty && staff.department != Department.all)
+              ? staff.department
+              : _selectedDepartment!;
           setState(() {
             _staff = staff;
+            _selectedDepartment = effectiveDept;
             _workMode = workMode;
             _workLocation =
                 workMode == 'Work From Home' ? location?.address : null;

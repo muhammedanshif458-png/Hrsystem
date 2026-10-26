@@ -8,6 +8,10 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'date_time_utils.dart';
+import 'services/api_service.dart';
+import 'config/api_config.dart';
+import 'core/api/api_exception.dart';
+import 'storage/token_storage.dart';
 
 // ─── Interface (abstract class) ───────────────────────────────────────────────
 
@@ -39,10 +43,13 @@ abstract class HRRepository {
 
   Future<void> updateStaff(Staff staff);
   Future<void> markStaffResigned(String staffId, String resignedDate);
+  Future<Staff> fetchProfile();
+  Future<void> updateProfile({String? phone, String? address});
 
+  Future<void> fetchStaffAttendance();
   Future<Attendance> checkIn(String staffId);
   Future<void> checkOut(String attendanceId);
-  Future<void> toggleBreak(String attendanceId);
+  Future<void> toggleBreak(String attendanceId, {String? breakType});
   Future<void> endExpiredBreak(String attendanceId);
   Future<void> requestLeave(
       {required String staffId,
@@ -51,8 +58,11 @@ abstract class HRRepository {
       required String reason,
       String type = 'Casual Leave',
       String? documentName,
-      String? documentUrl});
+      String? documentUrl,
+      Uint8List? documentBytes});
+  Future<Uint8List> downloadDocument(String documentUrlOrId);
   Future<void> reviewLeave(String requestId, bool approved);
+  Future<void> fetchStaffLeaves();
   Future<void> deleteLeaveRequest(String requestId);
   Future<void> requestResignation(
       {required String staffId,
@@ -68,14 +78,22 @@ abstract class HRRepository {
   });
 
   Future<void> updateTaskStatus(String taskId, String status);
-  Future<DailyUpdate> submitDailyUpdate(String staffId, String text);
+
+  /// Fetch this staff member's daily updates from the backend.
+  Future<void> fetchDailyUpdates();
+
+  /// Submit a new daily update for this staff member.
+  /// [title] and [text] are validated before sending.
+  Future<DailyUpdate> submitDailyUpdate(String title, String text);
 }
 
 // ─── Implementation ───────────────────────────────────────────────────────────
 
 class HRRepositoryImpl implements HRRepository {
   late final Future<void> _attendanceRestored;
-  HRRepositoryImpl() {
+  final ApiService _api;
+
+  HRRepositoryImpl({ApiService? api}) : _api = api ?? ApiService() {
     _seedInitialData();
     _attendanceRestored = _restoreAttendance();
   }
@@ -206,12 +224,8 @@ class HRRepositoryImpl implements HRRepository {
     // Tasks
     tasksList.value = [];
 
-    // Daily Updates
-    dailyUpdatesList.value = [
-      DailyUpdate(id: 'upd_1', staffId: techLead.id, date: '2026-09-08'),
-      DailyUpdate(id: 'upd_2', staffId: techDev.id, date: '2026-09-08'),
-      DailyUpdate(id: 'upd_3', staffId: telecallingLead.id, date: '2026-09-16'),
-    ];
+    // Daily Updates: seeded from backend on demand; start empty.
+    dailyUpdatesList.value = [];
     leaveRequests.value = [];
   }
 
@@ -219,22 +233,141 @@ class HRRepositoryImpl implements HRRepository {
 
   @override
   Future<Staff> signIn(String email, String password) async {
-    final trimmed = email.trim();
-    if (trimmed.isEmpty || password.trim().isEmpty || !trimmed.contains('@')) {
-      throw Exception('Please enter a valid demo email and password.');
+    final trimmedEmail = email.trim().toLowerCase();
+    final trimmedPassword = password.trim();
+
+    if (trimmedEmail.isEmpty || !trimmedEmail.contains('@')) {
+      throw Exception('Please enter a valid work email.');
+    }
+    if (trimmedPassword.isEmpty) {
+      throw Exception('Please enter your password.');
     }
 
-    final found = staffList.value.firstWhere(
-      (s) => s.email.toLowerCase() == trimmed.toLowerCase(),
-      orElse: () => const Staff(id: '__not_found__'),
-    );
+    try {
+      final response = await _api.post(
+        ApiConfig.login,
+        body: {
+          'email': trimmedEmail,
+          'password': trimmedPassword,
+        },
+        requiresAuth: false,
+      );
 
-    if (found.id != '__not_found__') {
-      currentUser.value = found;
-      return found;
+      if (response is! Map<String, dynamic> || response['success'] != true) {
+        final message =
+            (response is Map ? response['message']?.toString() : null) ??
+                'Login failed. Please verify your credentials.';
+        throw Exception(message);
+      }
+
+      final data = response['data'] as Map<String, dynamic>?;
+      if (data == null) {
+        throw Exception('Malformed login response: missing data object.');
+      }
+
+      final token = data['accessToken']?.toString() ?? '';
+      final refreshToken = data['refreshToken']?.toString();
+      if (token.isNotEmpty) {
+        await TokenStorage.saveTokens(token: token, refreshToken: refreshToken);
+      }
+
+      final userMap = data['user'] as Map<String, dynamic>? ?? {};
+      final rawRole = (userMap['role'] ?? '').toString().toUpperCase();
+
+      if (userMap['isActive'] == false) {
+        await TokenStorage.clearTokens();
+        throw Exception(
+            'Your account has been deactivated. Please contact HR.');
+      }
+
+      // Check role: Only staff accounts may sign in to the Staff Portal
+      if (rawRole != 'STAFF' && rawRole != 'EMPLOYEE') {
+        await TokenStorage.clearTokens();
+        throw Exception(
+            'Access denied: Only staff accounts can access the Staff Portal.');
+      }
+
+      final empMap = (userMap['employee'] is Map<String, dynamic>)
+          ? userMap['employee'] as Map<String, dynamic>
+          : (userMap['employee'] is Map
+              ? Map<String, dynamic>.from(userMap['employee'] as Map)
+              : null);
+
+      final staffId = empMap?['employeeId']?.toString() ??
+          empMap?['_id']?.toString() ??
+          userMap['_id']?.toString() ??
+          '';
+
+      final firstName = empMap?['firstName']?.toString() ??
+          userMap['firstName']?.toString() ??
+          '';
+      final lastName = empMap?['lastName']?.toString() ??
+          userMap['lastName']?.toString() ??
+          '';
+      final fullName = ('$firstName $lastName').trim();
+      final staffName = fullName.isNotEmpty
+          ? fullName
+          : (userMap['name']?.toString() ?? 'Staff Member');
+
+      final rawDept =
+          (empMap?['department'] ?? userMap['department'] ?? '').toString();
+      final staffDept = rawDept.toLowerCase().contains('tele')
+          ? Department.telecalling
+          : Department.tech;
+
+      final staffStatus =
+          (empMap?['status']?.toString().toUpperCase() == 'INACTIVE' ||
+                  empMap?['status']?.toString().toUpperCase() == 'TERMINATED')
+              ? Status.resigned
+              : Status.active;
+
+      final staff = Staff(
+        id: staffId,
+        name: staffName,
+        email: userMap['email']?.toString() ?? trimmedEmail,
+        phoneNumber:
+            empMap?['phone']?.toString() ?? userMap['phone']?.toString() ?? '',
+        address: empMap?['address']?.toString() ?? '',
+        department: staffDept,
+        role: Role.staff,
+        joinDate: empMap?['joiningDate'] != null
+            ? empMap!['joiningDate'].toString().split('T').first
+            : DateTime.now().toString().split(' ').first,
+        status: staffStatus,
+        onLeaveToday: empMap?['status']?.toString().toUpperCase() == 'ON_LEAVE',
+      );
+
+      currentUser.value = staff;
+
+      // Update local staffList so UI screens find the logged-in staff member
+      final list = List<Staff>.from(staffList.value);
+      final idx = list.indexWhere((s) =>
+          s.id == staff.id ||
+          s.email.toLowerCase() == staff.email.toLowerCase());
+      if (idx != -1) {
+        list[idx] = staff;
+      } else {
+        list.add(staff);
+      }
+      staffList.value = list;
+
+      return staff;
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) {
+        throw Exception('Invalid email or password.');
+      } else if (e.statusCode == 403) {
+        throw Exception(e.message);
+      } else if (e.statusCode == 404) {
+        throw Exception(
+            'Account not found or not linked to an employee profile.');
+      } else if (e.statusCode == 422) {
+        throw Exception(e.message);
+      }
+      throw Exception(e.message);
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception(e.toString());
     }
-
-    throw Exception('No staff account was found for this email.');
   }
 
   @override
@@ -248,8 +381,50 @@ class HRRepositoryImpl implements HRRepository {
   }
 
   @override
+  Future<Staff> fetchProfile() async {
+    try {
+      final response = await _api.get(ApiConfig.staffProfile);
+      if (response['success'] == true) {
+        final data = response['data'];
+        final updatedStaff = currentUser.value?.copyWith(
+              id: data['employeeId'] ?? currentUser.value?.id,
+              name: data['firstName'] ?? currentUser.value?.name,
+              department: data['department'] ?? currentUser.value?.department,
+            ) ??
+            Staff(
+              id: data['employeeId'] ?? '',
+              name: data['firstName'] ?? '',
+              department: data['department'] ?? Department.tech,
+            );
+        currentUser.value = updatedStaff;
+        return updatedStaff;
+      }
+    } catch (e) {
+      debugPrint('fetchProfile error: $e');
+    }
+    return currentUser.value ?? const Staff();
+  }
+
+  @override
+  Future<void> updateProfile({String? phone, String? address}) async {
+    final body = <String, dynamic>{};
+    if (phone != null) body['phone'] = phone;
+    if (address != null) body['address'] = address;
+    try {
+      final response = await _api.put(ApiConfig.staffProfile, body: body);
+      if (response['success'] == true) {
+        await fetchProfile();
+      }
+    } catch (e) {
+      debugPrint('updateProfile error: $e');
+      rethrow;
+    }
+  }
+
+  @override
   void signOut() {
     currentUser.value = null;
+    TokenStorage.clearTokens();
   }
 
   @override
@@ -326,97 +501,138 @@ class HRRepositoryImpl implements HRRepository {
   // ── Attendance ────────────────────────────────────────────────────────────
 
   @override
-  Future<Attendance> checkIn(String staffId) async {
-    await _attendanceRestored;
-    final today = DateTimeUtils.getTodayIsoDate();
-    final existing = attendanceList.value.firstWhere(
-      (a) => a.staffId == staffId && a.date == today,
-      orElse: () => const Attendance(id: '__none__'),
-    );
-    if (existing.id != '__none__') {
-      throw Exception('Already checked in today at ${existing.checkInTime}.');
+  Future<void> fetchStaffAttendance() async {
+    try {
+      final response = await _api.get(ApiConfig.attendance);
+      if (response is! Map || response['success'] != true || response['data'] is! List) {
+        throw const FormatException('Malformed attendance response from server.');
+      }
+      attendanceList.value = (response['data'] as List)
+          .map((e) {
+            if (e is! Map) throw const FormatException('Malformed attendance record from server.');
+            return Attendance.fromJson(
+              Map<String, dynamic>.from(e),
+              staffId: currentUser.value?.id,
+            );
+          })
+          .toList();
+      await _saveAttendance();
+    } catch (e) {
+      debugPrint('fetchStaffAttendance error: $e');
+      rethrow;
     }
+  }
 
-    final timeNow = DateTimeUtils.getCurrentTime();
-    final attendance = Attendance(
-      id: 'att_${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}',
-      staffId: staffId,
-      date: today,
-      checkInTime: timeNow,
-      isLate: DateTimeUtils.isTimeLate(timeNow),
-      checkInAt: DateTime.now(),
-    );
-
-    attendanceList.value = [attendance, ...attendanceList.value];
-    await _saveAttendance();
-    return attendance;
+  @override
+  Future<Attendance> checkIn(String staffId) async {
+    try {
+      final response = await _api.post(ApiConfig.attendanceCheckIn, body: {});
+      if (response is! Map || response['success'] != true || response['data'] is! Map) {
+        throw const FormatException('Malformed check-in response from server.');
+      }
+      final returned = Attendance.fromJson(
+        Map<String, dynamic>.from(response['data'] as Map),
+        staffId: currentUser.value?.id ?? staffId,
+      );
+      // Attendance GET is the authoritative refreshed record; never classify late locally.
+      await fetchStaffAttendance();
+      final refreshed = attendanceList.value.where((record) =>
+        (returned.id.isNotEmpty && record.id == returned.id) ||
+        (returned.id.isEmpty && record.isToday &&
+          (record.staffId.isEmpty || record.staffId == (currentUser.value?.id ?? staffId)))
+      ).firstOrNull;
+      return refreshed ?? returned;
+    } on ApiException catch (e) {
+      if (e.statusCode == 400 &&
+          e.message.toLowerCase().contains('already checked in')) {
+        await fetchStaffAttendance();
+      }
+      rethrow;
+    } catch (e) {
+      debugPrint('checkIn error: $e');
+      rethrow;
+    }
   }
 
   @override
   Future<void> checkOut(String attendanceId) async {
-    await _attendanceRestored;
-    final timeNow = DateTimeUtils.getCurrentTime();
-    final now = DateTime.now();
-    attendanceList.value = attendanceList.value.map((a) {
-      if (a.id == attendanceId) {
-        if (a.checkOutTime != null) return a;
-        final active = a.breaks.where((b) => b.isActive).toList();
-        final open = active.isEmpty ? null : active.first;
-        final attendance = open == null ? a : _closeBreak(a, open, now);
-        final totalBreak = attendance.totalBreakSeconds;
-        final worked = a.checkInAt == null
-            ? ''
-            : _formatDuration(
-                now.difference(a.checkInAt!).inSeconds - totalBreak);
-        return attendance.copyWith(
-            checkOutTime: timeNow,
-            checkOutAt: now,
-            workedDuration: worked,
-            breakDuration: _formatDuration(totalBreak),
-        );
+    try {
+      final response = await _api.post(ApiConfig.attendanceCheckOut, body: {});
+      if (response is! Map || response['success'] != true) {
+        final message = response is Map ? response['message']?.toString() : null;
+        throw ApiException(statusCode: null, message: message ?? 'Check-out was not confirmed by the server.');
       }
-      return a;
-    }).toList();
-    await _saveAttendance();
+      await fetchStaffAttendance();
+    } on ApiException catch (e) {
+      if (e.statusCode == 400 &&
+          e.message.toLowerCase().contains('already checked out')) {
+        await fetchStaffAttendance();
+      }
+      rethrow;
+    } catch (e) {
+      debugPrint('checkOut error: $e');
+      rethrow;
+    }
   }
 
   @override
-  Future<void> toggleBreak(String attendanceId) async {
+  Future<void> toggleBreak(String attendanceId, {String? breakType}) async {
     await _attendanceRestored;
-    final now = DateTime.now();
-    final found = attendanceList.value.where((a) => a.id == attendanceId).toList();
+    final found =
+        attendanceList.value.where((a) => a.id == attendanceId).toList();
     if (found.isEmpty) throw Exception('Attendance record not found.');
     final a = found.first;
-    if (a.date != DateTimeUtils.getTodayIsoDate()) throw Exception('Breaks can only be recorded for today.');
-    if (a.checkOutTime != null) throw Exception('This shift is already complete.');
-    if (a.checkInAt == null) throw Exception('Check in before starting a break.');
+    if (a.date != DateTimeUtils.getTodayIsoDate())
+      throw Exception('Breaks can only be recorded for today.');
+    if (a.checkOutTime != null)
+      throw Exception('This shift is already complete.');
+    if (a.checkInAt == null)
+      throw Exception('Check in before starting a break.');
     final active = a.breaks.where((b) => b.isActive).toList();
-    Attendance updated;
     if (active.isNotEmpty) {
-      updated = _closeBreak(a, active.first, now);
+      if (breakType != null && breakType != active.first.breakType) {
+        throw Exception('End the active break before starting another break.');
+      }
+      final response = await _api.post(
+        ApiConfig.attendanceBreakEnd(a.id),
+        body: {'breakType': active.first.breakType},
+      );
+      _validateBreakResponse(response, 'end');
     } else {
       if (a.breaks.length >= AttendanceBreakSchedule.types.length) {
         throw Exception('All breaks for today have been used.');
       }
-      final nextBreakIndex = a.breaks.length;
-      if (!AttendanceBreakSchedule.canStart(now, nextBreakIndex)) {
-        throw Exception('The next break is not available yet.');
+      final selectedType = breakType;
+      if (selectedType == null || !AttendanceBreakSchedule.types.contains(selectedType)) {
+        throw ArgumentError.value(breakType, 'breakType', 'Choose one of the configured breaks.');
       }
-      final record = AttendanceBreak(id: 'break_${now.microsecondsSinceEpoch}',
-          attendanceId: a.id,
-          breakType: AttendanceBreakSchedule.types[nextBreakIndex],
-          startTime: now);
-      updated = a.copyWith(breakStartedAt: now, breaks: [...a.breaks, record]);
+      if (a.breaks.any((item) => item.breakType == selectedType)) {
+        throw Exception('This break has already been completed.');
+      }
+      final response = await _api.post(
+        ApiConfig.attendanceBreakStart(a.id),
+        body: {'breakType': selectedType},
+      );
+      _validateBreakResponse(response, 'start');
     }
-    attendanceList.value = attendanceList.value.map((item) => item.id == a.id ? updated : item).toList();
-    await _saveAttendance();
+    // The attendance endpoint is authoritative for saved break timestamps.
+    await fetchStaffAttendance();
+  }
+
+  void _validateBreakResponse(dynamic response, String operation) {
+    if (response is! Map || response['success'] != true) {
+      final message = response is Map ? response['message']?.toString() : null;
+      throw ApiException(statusCode: null,
+          message: message ?? 'The server did not confirm the break $operation.');
+    }
   }
 
   @override
   Future<void> endExpiredBreak(String attendanceId) async {
     await _attendanceRestored;
     final now = DateTime.now();
-    final found = attendanceList.value.where((a) => a.id == attendanceId).toList();
+    final found =
+        attendanceList.value.where((a) => a.id == attendanceId).toList();
     if (found.isEmpty) return;
     final attendance = found.first;
     if (attendance.checkOutTime != null) return;
@@ -425,32 +641,12 @@ class HRRepositoryImpl implements HRRepository {
         now.difference(active.startTime).inSeconds < active.allowanceSeconds) {
       return;
     }
-    final updated = _closeBreak(attendance, active, now);
-    attendanceList.value = attendanceList.value
-        .map((item) => item.id == attendance.id ? updated : item)
-        .toList();
-    await _saveAttendance();
-  }
-
-  Attendance _closeBreak(
-      Attendance attendance, AttendanceBreak activeBreak, DateTime now) {
-    final seconds = activeBreak.durationAt(now);
-    final endTime = activeBreak.startTime.add(Duration(seconds: seconds));
-    final breaks = attendance.breaks.map((item) => item.id == activeBreak.id
-        ? AttendanceBreak(
-            id: activeBreak.id,
-            attendanceId: activeBreak.attendanceId,
-            breakType: activeBreak.breakType,
-            startTime: activeBreak.startTime,
-            endTime: endTime,
-            durationSeconds: seconds)
-        : item).toList();
-    final total = attendance.totalBreakSeconds + seconds;
-    return attendance.copyWith(
-        breaks: breaks,
-        totalBreakSeconds: total,
-        breakDuration: _formatDuration(total),
-        clearBreakStartedAt: true);
+    final response = await _api.post(
+      ApiConfig.attendanceBreakEnd(attendance.id),
+      body: {'breakType': active.breakType},
+    );
+    _validateBreakResponse(response, 'end');
+    await fetchStaffAttendance();
   }
 
   Future<void> _restoreAttendance() async {
@@ -465,36 +661,142 @@ class HRRepositoryImpl implements HRRepository {
 
   Future<void> _saveAttendance() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('staffhub.attendance.v1', jsonEncode(attendanceList.value.map(_attendanceToJson).toList()));
+    await prefs.setString('staffhub.attendance.v1',
+        jsonEncode(attendanceList.value.map(_attendanceToJson).toList()));
   }
 
-  Map<String, dynamic> _attendanceToJson(Attendance a) => {
-    'id': a.id, 'staffId': a.staffId, 'date': a.date, 'checkInTime': a.checkInTime,
-    'checkOutTime': a.checkOutTime, 'workedDuration': a.workedDuration,
-    'breakDuration': a.breakDuration, 'isLate': a.isLate,
-    'checkInAt': a.checkInAt?.toIso8601String(), 'checkOutAt': a.checkOutAt?.toIso8601String(), 'totalBreakSeconds': a.totalBreakSeconds,
-    'breaks': a.breaks.map((b) => {'id': b.id, 'attendanceId': b.attendanceId,
-      'breakType': b.breakType, 'startTime': b.startTime.toIso8601String(),
-      'endTime': b.endTime?.toIso8601String(), 'durationSeconds': b.durationSeconds}).toList(),
-  };
+  Map<String, dynamic> _attendanceToJson(Attendance a) => a.toJson();
 
-  Attendance _attendanceFromJson(Map<String, dynamic> j) => Attendance(
-    id: j['id'] as String, staffId: j['staffId'] as String, date: j['date'] as String,
-    checkInTime: j['checkInTime'] as String, checkOutTime: j['checkOutTime'] as String?,
-    workedDuration: j['workedDuration'] as String? ?? '', breakDuration: j['breakDuration'] as String? ?? '',
-    isLate: j['isLate'] as bool? ?? false, checkInAt: DateTime.tryParse(j['checkInAt'] as String? ?? ''),
-    checkOutAt: DateTime.tryParse(j['checkOutAt'] as String? ?? ''),
-    totalBreakSeconds: j['totalBreakSeconds'] as int? ?? 0,
-    breaks: ((j['breaks'] as List?) ?? []).map((x) { final b = x as Map<String, dynamic>;
-      return AttendanceBreak(id: b['id'] as String, attendanceId: b['attendanceId'] as String,
-        breakType: b['breakType'] as String, startTime: DateTime.parse(b['startTime'] as String),
-        endTime: DateTime.tryParse(b['endTime'] as String? ?? ''), durationSeconds: b['durationSeconds'] as int? ?? 0);
-    }).toList(),
-  );
+  Attendance _attendanceFromJson(Map<String, dynamic> j) =>
+      Attendance.fromJson(j);
 
-  String _formatDuration(int seconds) {
-    final safe = seconds < 0 ? 0 : seconds;
-    return '${safe ~/ 3600}h ${(safe % 3600) ~/ 60}m';
+  String _mapLeaveTypeToBackend(String t) {
+    switch (t.trim().toUpperCase()) {
+      case 'CASUAL LEAVE':
+      case 'CASUAL':
+        return 'CASUAL';
+      case 'SICK LEAVE':
+      case 'SICK':
+        return 'SICK';
+      case 'MEDICAL LEAVE':
+        return 'SICK';
+      case 'EARNED LEAVE':
+      case 'ANNUAL LEAVE':
+      case 'ANNUAL':
+        return 'ANNUAL';
+      case 'UNPAID LEAVE':
+      case 'UNPAID':
+        return 'UNPAID';
+      case 'OTHER':
+        return 'OTHER';
+      default:
+        return 'CASUAL';
+    }
+  }
+
+  String _mapBackendLeaveTypeToUi(String? backendType, {bool hasDoc = false}) {
+    switch (backendType?.trim().toUpperCase()) {
+      case 'CASUAL':
+        return 'Casual Leave';
+      case 'SICK':
+        return hasDoc ? 'Medical Leave' : 'Sick Leave';
+      case 'ANNUAL':
+        return 'Earned Leave';
+      case 'UNPAID':
+        return 'Unpaid Leave';
+      case 'OTHER':
+        return 'Other';
+      default:
+        return backendType ?? 'Casual Leave';
+    }
+  }
+
+  String _mapBackendStatusToUi(String? status) {
+    switch (status?.trim().toUpperCase()) {
+      case 'APPROVED':
+        return LeaveStatus.approved;
+      case 'REJECTED':
+        return LeaveStatus.rejected;
+      case 'PENDING':
+        return LeaveStatus.pending;
+      case 'CANCELLED':
+        return 'Cancelled';
+      default:
+        return status ?? LeaveStatus.pending;
+    }
+  }
+
+  String _formatDateForBackend(String d) {
+    if (d.contains('T')) return d.split('T')[0];
+    return d.trim();
+  }
+
+  @override
+  Future<void> fetchStaffLeaves() async {
+    try {
+      final response = await _api.get(ApiConfig.leaves);
+      if (response['success'] == true) {
+        final data = response['data'] as List?;
+        if (data != null) {
+          leaveRequests.value = data.map((e) {
+            final docName = e['documentName'] as String?;
+            final docUrl = e['documentUrl'] as String?;
+            final rawDoc = e['document'];
+            String? docId;
+            String? resolvedDocName = docName;
+            if (rawDoc is Map) {
+              docId = rawDoc['_id']?.toString() ?? rawDoc['id']?.toString();
+              resolvedDocName ??= (rawDoc['originalName'] as String?) ??
+                  (rawDoc['fileName'] as String?);
+            } else if (rawDoc is String && rawDoc.isNotEmpty) {
+              docId = rawDoc;
+            }
+            if (docId == null && e['documentId'] != null) {
+              docId = e['documentId']?.toString();
+            }
+            final rawType = e['leaveType'] as String?;
+            final rawStatus = e['status'] as String?;
+            final staffObj = e['staff'] ?? e['employee'];
+            String parsedStaffId = '';
+            if (staffObj is Map) {
+              parsedStaffId = staffObj['_id']?.toString() ??
+                  staffObj['id']?.toString() ??
+                  '';
+            } else if (staffObj is String) {
+              parsedStaffId = staffObj;
+            }
+            if (parsedStaffId.isEmpty && e['staffId'] != null) {
+              parsedStaffId = e['staffId'].toString();
+            }
+            if (parsedStaffId.isEmpty && e['employeeId'] != null) {
+              parsedStaffId = e['employeeId'].toString();
+            }
+            if (parsedStaffId.isEmpty) {
+              parsedStaffId = currentUser.value?.id ?? '';
+            }
+            return LeaveRequest(
+              id: e['_id'] ?? e['id'] ?? '',
+              staffId: parsedStaffId,
+              fromDate: e['startDate'] ?? '',
+              toDate: e['endDate'] ?? '',
+              reason: e['reason'] ?? '',
+              type: _mapBackendLeaveTypeToUi(rawType,
+                  hasDoc: resolvedDocName != null ||
+                      docUrl != null ||
+                      docId != null),
+              status: _mapBackendStatusToUi(rawStatus),
+              documentName: resolvedDocName,
+              documentUrl: docUrl,
+              documentId: docId,
+              createdAt:
+                  DateTime.tryParse(e['createdAt'] ?? '') ?? DateTime.now(),
+            );
+          }).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchStaffLeaves error: $e');
+    }
   }
 
   @override
@@ -505,28 +807,83 @@ class HRRepositoryImpl implements HRRepository {
       required String reason,
       String type = 'Casual Leave',
       String? documentName,
-      String? documentUrl}) async {
-    if (reason.trim().isEmpty)
+      String? documentUrl,
+      Uint8List? documentBytes}) async {
+    if (reason.trim().isEmpty) {
       throw Exception('Please enter a reason for leave.');
-    leaveRequests.value = [
-      LeaveRequest(
-          id: 'leave_${DateTime.now().millisecondsSinceEpoch}',
-          staffId: staffId,
-          fromDate: fromDate,
-          toDate: toDate,
-          reason: reason.trim(),
-          type: type,
-          documentName: documentName,
-          documentUrl: documentUrl,
-          createdAt: DateTime.now()),
-      ...leaveRequests.value
-    ];
+    }
+
+    try {
+      final backendLeaveType = _mapLeaveTypeToBackend(type);
+      final start = _formatDateForBackend(fromDate);
+      final end = _formatDateForBackend(toDate);
+
+      if (documentBytes != null && documentBytes.isNotEmpty) {
+        final fields = <String, dynamic>{
+          'leaveType': backendLeaveType,
+          'startDate': start,
+          'endDate': end,
+          'reason': reason.trim(),
+        };
+        if (documentName != null && documentName.isNotEmpty) {
+          fields['documentName'] = documentName;
+        }
+        final response = await _api.postMultipart(
+          ApiConfig.leaves,
+          fields: fields,
+          fileFieldName: 'file',
+          fileBytes: documentBytes,
+          fileName: documentName ?? 'medical_certificate.pdf',
+        );
+        if (response['success'] == true) {
+          await fetchStaffLeaves();
+        }
+      } else {
+        final body = <String, dynamic>{
+          'leaveType': backendLeaveType,
+          'startDate': start,
+          'endDate': end,
+          'reason': reason.trim(),
+        };
+        if (documentName != null) body['documentName'] = documentName;
+        if (documentUrl != null) body['documentUrl'] = documentUrl;
+
+        final response = await _api.post(ApiConfig.leaves, body: body);
+        if (response['success'] == true) {
+          await fetchStaffLeaves();
+        }
+      }
+    } catch (e) {
+      debugPrint('requestLeave error: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<Uint8List> downloadDocument(String documentUrlOrId) async {
+    String endpoint;
+    final trimmed = documentUrlOrId.trim();
+    if (trimmed.startsWith('/') ||
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('https://')) {
+      endpoint = trimmed;
+    } else {
+      endpoint = ApiConfig.staffDocumentDownload(trimmed);
+    }
+    return await _api.getBytes(endpoint);
   }
 
   @override
   Future<void> deleteLeaveRequest(String requestId) async {
-    leaveRequests.value =
-        leaveRequests.value.where((r) => r.id != requestId).toList();
+    try {
+      final response = await _api.delete(ApiConfig.leaveById(requestId));
+      if (response['success'] == true) {
+        await fetchStaffLeaves();
+      }
+    } catch (e) {
+      debugPrint('deleteLeaveRequest error: $e');
+      rethrow;
+    }
   }
 
   @override
@@ -618,20 +975,84 @@ class HRRepositoryImpl implements HRRepository {
   // ── Daily Updates ─────────────────────────────────────────────────────────
 
   @override
-  Future<DailyUpdate> submitDailyUpdate(String staffId, String text) async {
-    if (text.trim().isEmpty) {
-      throw Exception('Daily update description cannot be empty.');
+  Future<void> fetchDailyUpdates() async {
+    try {
+      final response = await _api.get(ApiConfig.dailyUpdates);
+      if (response is Map && response['success'] == false) {
+        throw FormatException(
+            response['message']?.toString() ?? 'Failed to load daily updates.');
+      }
+      final raw = response is Map ? response['data'] : response;
+      if (raw is! List) {
+        throw const FormatException('Malformed daily updates response.');
+      }
+      dailyUpdatesList.value = raw.map((item) {
+        if (item is! Map) {
+          throw const FormatException('Malformed daily update item.');
+        }
+        return DailyUpdate.fromJson(Map<String, dynamic>.from(item));
+      }).toList();
+    } on ApiException catch (e) {
+      debugPrint('fetchDailyUpdates error: $e');
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchDailyUpdates unexpected error: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<DailyUpdate> submitDailyUpdate(
+    String title,
+    String text,
+  ) async {
+    final trimmedTitle = title.trim();
+    final trimmedText = text.trim();
+    if (trimmedTitle.isEmpty) {
+      throw Exception('Please enter a title for the update.');
+    }
+    if (trimmedText.isEmpty) {
+      throw Exception('Please enter details for the update.');
     }
 
-    final update = DailyUpdate(
-      id: 'upd_${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}',
-      staffId: staffId,
-      date: DateTimeUtils.getTodayIsoDate(),
-      updateText: text.trim(),
-    );
+    try {
+      final response = await _api.post(
+        ApiConfig.dailyUpdates,
+        body: {
+          'title': trimmedTitle,
+          'updateText': trimmedText,
+        },
+      );
 
-    dailyUpdatesList.value = [update, ...dailyUpdatesList.value];
-    return update;
+      if (response is Map && response['success'] == false) {
+        throw Exception(response['message']?.toString() ??
+            'Failed to submit daily update.');
+      }
+
+      final rawData = response is Map && response.containsKey('data')
+          ? response['data']
+          : response;
+      if (rawData is! Map) {
+        throw const FormatException('Malformed daily update response.');
+      }
+
+      final update = DailyUpdate.fromJson(Map<String, dynamic>.from(rawData));
+      if (update.id.isEmpty ||
+          update.title.isEmpty ||
+          update.updateText.isEmpty) {
+        throw const FormatException(
+            'Daily update response is missing persisted update fields.');
+      }
+      dailyUpdatesList.value = [update, ...dailyUpdatesList.value];
+      return update;
+    } on ApiException catch (e) {
+      debugPrint('submitDailyUpdate ApiException: $e');
+      rethrow;
+    } catch (e) {
+      debugPrint('submitDailyUpdate error: $e');
+      if (e is Exception) rethrow;
+      throw Exception(e.toString());
+    }
   }
 
   void dispose() {

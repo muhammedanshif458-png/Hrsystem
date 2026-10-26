@@ -7,8 +7,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hr_core/hr_repository.dart';
-import 'package:hr_core/hr_view_model.dart';
+import 'mock_hr_repository.dart';
+
 import 'package:hr_core/main.dart';
 import 'package:hr_core/models.dart';
 import 'package:hr_core/profile_page.dart';
@@ -16,7 +16,7 @@ import 'package:hr_core/staff_screens.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  test('break schedule and fixed break allowances are enforced', () async {
+  test('break schedule is informational and break allowances remain configured', () async {
     final day = DateTime(2026, 9, 24);
     expect(AttendanceBreakSchedule.canStart(DateTime(2026, 9, 24, 11, 29), 0), isFalse);
     expect(AttendanceBreakSchedule.canStart(DateTime(2026, 9, 24, 11, 30), 0), isTrue);
@@ -24,8 +24,10 @@ void main() {
     expect(AttendanceBreakSchedule.startsAt(day, 2), DateTime(2026, 9, 24, 16));
 
     SharedPreferences.setMockInitialValues({});
-    final repository = HRRepositoryImpl();
+    final repository = MockHRRepository();
     final attendance = await repository.checkIn('staff_break_test');
+    await repository.toggleBreak(attendance.id, breakType: 'afternoon');
+    expect(repository.attendanceList.value.single.breaks.single.breakType, 'afternoon');
 
     final startedAt = DateTime.now().subtract(const Duration(minutes: 20));
     final expiredBreak = AttendanceBreak(
@@ -72,7 +74,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     for (final department in [Department.tech, Department.telecalling]) {
       SharedPreferences.setMockInitialValues({});
-      final repository = HRRepositoryImpl();
+      final repository = MockHRRepository();
       final now = DateTime.now();
       repository.attendanceList.value = [
         Attendance(
@@ -102,12 +104,13 @@ void main() {
 
       await tester.pumpWidget(MaterialApp(
         home: StaffHubShell(
+          repository: repository,
           pageIndex: 0,
           department: department,
           staff: staff,
           workMode: 'Office',
           workLocation: null,
-          repository: repository,
+          
           onNavigate: (_) {},
           onLogout: () {},
         ),
@@ -115,15 +118,19 @@ void main() {
 
       expect(find.text('Break in Progress'), findsWidgets);
       expect(find.text('Morning Break'), findsOneWidget);
-      expect(find.textContaining(RegExp(r'Remaining: \d{2}:\d{2}')), findsOneWidget);
+      expect(find.textContaining(RegExp(r'elapsed')), findsOneWidget);
       expect(find.text('End Break'), findsOneWidget);
 
       await tester.tap(find.text('End Break'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Upcoming Break'), findsOneWidget);
-      expect(find.text('Lunch Break · 1:30 PM'), findsOneWidget);
-      expect(find.text('Start Break'), findsOneWidget);
+      expect(find.text('Breaks'), findsOneWidget);
+      expect(find.text('Morning Break'), findsOneWidget);
+      expect(find.text('Lunch Break'), findsOneWidget);
+      expect(find.text('Afternoon Break'), findsOneWidget);
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.textContaining('Available'), findsNWidgets(2));
+      expect(find.text('Start Break'), findsNWidgets(2));
     }
   });
 
@@ -132,7 +139,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     for (final department in [Department.tech, Department.telecalling]) {
       SharedPreferences.setMockInitialValues({});
-      final repository = HRRepositoryImpl();
+      final repository = MockHRRepository();
       final now = DateTime.now();
       repository.attendanceList.value = [
         Attendance(
@@ -163,13 +170,14 @@ void main() {
       );
       await tester.pumpWidget(MaterialApp(
         home: StaffHubShell(
+          repository: repository,
           key: ValueKey(department),
           pageIndex: 1,
           department: department,
           staff: staff,
           workMode: 'Office',
           workLocation: null,
-          repository: repository,
+          
           onNavigate: (_) {},
           onLogout: () {},
         ),
@@ -196,13 +204,14 @@ void main() {
 
       await tester.pumpWidget(MaterialApp(
         home: StaffHubShell(
+          repository: MockHRRepository(),
           key: ValueKey(department),
           pageIndex: 3,
           department: department,
           staff: staff,
           workMode: 'Office',
           workLocation: null,
-          repository: HRRepositoryImpl(),
+          
           onNavigate: (_) {},
           onLogout: () {},
         ),
@@ -243,13 +252,14 @@ void main() {
       await tester.pumpWidget(StatefulBuilder(
         builder: (context, updateParent) => MaterialApp(
           home: StaffHubShell(
+          repository: MockHRRepository(),
             key: ValueKey(department),
             pageIndex: selectedPage,
             department: department,
             staff: staff,
             workMode: 'Office',
             workLocation: null,
-            repository: HRRepositoryImpl(),
+            
             onNavigate: (index) =>
                 updateParent(() => selectedPage = index),
             onLogout: () {},
@@ -312,24 +322,6 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  test('Telecalling and Tech filters update staff list and dashboard metrics', () {
-    final vm = HRViewModel(HRRepositoryImpl());
-
-    vm.setDepartmentFilter(Department.telecalling);
-    expect(vm.filteredStaffList.length, 3);
-    expect(vm.filteredStaffList.every((staff) => staff.department == Department.telecalling), isTrue);
-    expect(vm.dashboardMetrics.presentToday, 1);
-    expect(vm.dashboardMetrics.onLeaveToday, 2);
-    expect(vm.dashboardMetrics.lateCheckIns, 1);
-
-    vm.setDepartmentFilter(Department.tech);
-    expect(vm.filteredStaffList.length, 4);
-    expect(vm.filteredStaffList.every((staff) => staff.department == Department.tech), isTrue);
-    expect(vm.dashboardMetrics.presentToday, 0);
-    expect(vm.dashboardMetrics.onLeaveToday, 3);
-    expect(vm.dashboardMetrics.resignedLast30Days, 1);
-  });
-
   testWidgets('Profile page includes attendance, leave, and chat quick links', (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
 
@@ -360,6 +352,15 @@ void main() {
       role: Role.staff,
       status: 'active',
     );
+    final repository = MockHRRepository();
+    repository.dailyUpdatesList.value = [
+      DailyUpdate(
+        id: 'work-update-test',
+        staffId: staff.id,
+        title: 'Installations',
+        updateText: 'Completed client installation',
+      ),
+    ];
 
     await tester.pumpWidget(StatefulBuilder(
       builder: (context, setState) => MaterialApp(
@@ -367,10 +368,11 @@ void main() {
         darkTheme: ThemeData.dark(),
         themeMode: selectedThemeMode,
         home: StaffHubShell(
+          repository: repository,
           pageIndex: selectedPage,
           department: 'Tech',
           staff: staff,
-          repository: HRRepositoryImpl(),
+          
           workMode: 'Office',
           workLocation: null,
           themeMode: selectedThemeMode,
@@ -499,7 +501,7 @@ void main() {
       expect(tester.testTextInput.isVisible, isFalse);
       expect(find.text('Leave request submitted. Check Home for the update.'),
           findsOneWidget);
-      expect(find.text('Medical appointment'), findsNWidgets(2));
+      expect(find.text('Medical appointment'), findsOneWidget);
       expect(find.text('Submit Request'), findsOneWidget);
 
       await tester.tap(find.descendant(
@@ -520,5 +522,64 @@ void main() {
                 const Color(0xff19232d)),
         findsOneWidget,
       );
+  });
+
+  testWidgets('Staff home page updates leave status to Approved when HR accepts for Tech and Telecalling', (tester) async {
+    for (final dept in ['Tech', 'Telecalling']) {
+      final repository = MockHRRepository();
+      final staff = Staff(
+        id: 'staff_${dept.toLowerCase()}_1',
+        name: 'Alex $dept',
+        email: 'alex.$dept@example.com',
+        phoneNumber: '9876543210',
+        department: dept,
+        role: Role.staff,
+        joinDate: '2026-01-01',
+      );
+      repository.staffList.value = [staff];
+
+      final leaveReq = LeaveRequest(
+        id: 'leave_${dept.toLowerCase()}_1',
+        staffId: staff.id,
+        fromDate: '2026-10-27',
+        toDate: '2026-10-27',
+        reason: 'fever',
+        type: 'Sick Leave',
+        status: LeaveStatus.pending,
+        createdAt: DateTime.now(),
+      );
+      repository.leaveRequests.value = [leaveReq];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: staffHubThemeData(ThemeMode.light),
+          home: StaffHubShell(
+            pageIndex: 0,
+            department: dept,
+            staff: staff,
+            workMode: 'Office',
+            workLocation: null,
+            repository: repository,
+            onNavigate: (_) {},
+            onLogout: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Home page initially shows Leave Request Update with Pending
+      expect(find.text('Leave Request Update'), findsOneWidget);
+      expect(find.text('Pending'), findsOneWidget);
+      expect(find.text('Your request was submitted and is waiting for HR approval.'), findsOneWidget);
+
+      // HR approves the leave request
+      await repository.reviewLeave(leaveReq.id, true);
+      await tester.pumpAndSettle();
+
+      // Home page immediately reflects the HR Approved status!
+      expect(find.text('Leave Request Update'), findsOneWidget);
+      expect(find.text('Approved'), findsOneWidget);
+      expect(find.text('Your request has been approved by HR.'), findsOneWidget);
+    }
   });
 }

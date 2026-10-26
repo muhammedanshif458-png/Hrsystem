@@ -1,13 +1,13 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:convert';
 import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:pdfx/pdfx.dart';
-
-import 'hr_repository.dart';
 import 'models.dart';
+import 'hr_repository.dart';
+import 'core/api/api_exception.dart';
+import 'core/utils/file_download.dart';
 
 const _blue = Color(0xff2864e8);
 ThemeMode staffHubThemeMode = ThemeMode.light;
@@ -59,9 +59,9 @@ class StaffHubShell extends StatefulWidget {
       required this.pageIndex,
       required this.department,
       required this.staff,
+      required this.repository,
       required this.workMode,
       required this.workLocation,
-      required this.repository,
       this.themeMode = ThemeMode.light,
       this.onThemeModeChanged,
       required this.onNavigate,
@@ -69,9 +69,9 @@ class StaffHubShell extends StatefulWidget {
   final int pageIndex;
   final String department;
   final Staff staff;
+  final HRRepository repository;
   final String workMode;
   final String? workLocation;
-  final HRRepository repository;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode>? onThemeModeChanged;
   final ValueChanged<int> onNavigate;
@@ -83,14 +83,43 @@ class StaffHubShell extends StatefulWidget {
 class _StaffHubShellState extends State<StaffHubShell> {
   late final Timer _breakTimer;
   final Set<String> _autoEndingBreaks = {};
+  bool _isLoadingAttendance = false;
+  bool _isPunching = false;
+  String? _attendanceError;
 
   @override
   void initState() {
     super.initState();
     widget.repository.attendanceList.addListener(_onAttendanceChanged);
+    widget.repository.leaveRequests.addListener(_onLeavesChanged);
     _breakTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       unawaited(_endExpiredBreakIfNeeded());
     });
+    _loadAttendance();
+    unawaited(widget.repository.fetchStaffLeaves());
+  }
+
+  Future<void> _loadAttendance() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingAttendance = true;
+      _attendanceError = null;
+    });
+    try {
+      await widget.repository.fetchStaffAttendance();
+      if (mounted) {
+        setState(() {
+          _isLoadingAttendance = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingAttendance = false;
+          _attendanceError = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
   }
 
   @override
@@ -98,7 +127,13 @@ class _StaffHubShellState extends State<StaffHubShell> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository != widget.repository) {
       oldWidget.repository.attendanceList.removeListener(_onAttendanceChanged);
+      oldWidget.repository.leaveRequests.removeListener(_onLeavesChanged);
       widget.repository.attendanceList.addListener(_onAttendanceChanged);
+      widget.repository.leaveRequests.addListener(_onLeavesChanged);
+      _loadAttendance();
+      unawaited(widget.repository.fetchStaffLeaves());
+    } else if (oldWidget.pageIndex != widget.pageIndex && widget.pageIndex == 0) {
+      unawaited(widget.repository.fetchStaffLeaves());
     }
   }
 
@@ -106,9 +141,14 @@ class _StaffHubShellState extends State<StaffHubShell> {
     if (mounted) setState(() {});
   }
 
+  void _onLeavesChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _endExpiredBreakIfNeeded() async {
     final attendance = _todayAttendance;
-    final activeBreak = attendance?.breaks.where((item) => item.isActive).firstOrNull;
+    final activeBreak =
+        attendance?.breaks.where((item) => item.isActive).firstOrNull;
     if (attendance == null ||
         attendance.checkOutTime != null ||
         activeBreak == null ||
@@ -129,18 +169,48 @@ class _StaffHubShellState extends State<StaffHubShell> {
   @override
   void dispose() {
     widget.repository.attendanceList.removeListener(_onAttendanceChanged);
+    widget.repository.leaveRequests.removeListener(_onLeavesChanged);
     _breakTimer.cancel();
     super.dispose();
   }
 
-  Attendance? get _todayAttendance => widget.repository.attendanceList.value
-      .where((a) => a.staffId == widget.staff.id && a.date == DateTime.now().toIso8601String().substring(0, 10))
-      .firstOrNull;
-  bool get _checkedIn => _todayAttendance != null && _todayAttendance!.checkOutTime == null;
+  Attendance? get _todayAttendance {
+    final list = widget.repository.attendanceList.value;
+    return list.where((a) {
+      final matchesStaff = a.staffId.isEmpty ||
+          widget.staff.id.isEmpty ||
+          a.staffId == widget.staff.id;
+      return matchesStaff && a.isToday;
+    }).firstOrNull;
+  }
+
+  bool get _checkedIn =>
+      _todayAttendance != null &&
+      _todayAttendance!.checkOutAt == null &&
+      _todayAttendance!.checkOutTime == null;
+
   DateTime get _checkInTime => _todayAttendance?.checkInAt ?? DateTime.now();
-  DateTime? get _checkOutTime => _todayAttendance == null ? null :
-      _todayAttendance!.checkOutAt;
+
+  DateTime? get _checkOutTime => _todayAttendance?.checkOutAt;
+
   _LeaveRequestInfo? _leaveRequest;
+
+  _LeaveRequestInfo? get _latestLeaveRequest {
+    final list = widget.repository.leaveRequests.value;
+    final staffId = widget.staff.id;
+    final myRequests = list
+        .where((r) =>
+            staffId.isEmpty ||
+            r.staffId.isEmpty ||
+            r.staffId == staffId)
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final latest = myRequests.firstOrNull;
+    if (latest != null) {
+      return _LeaveRequestInfo.fromLeaveRequest(latest);
+    }
+    return _leaveRequest;
+  }
   int? _settingsSubPage;
   bool _chatSearchOpen = false;
   bool _chatNotifications = true;
@@ -148,14 +218,50 @@ class _StaffHubShellState extends State<StaffHubShell> {
   bool _punchReminders = true;
 
   Future<void> _togglePunch() async {
+    if (_isPunching) return;
+    setState(() => _isPunching = true);
     final attendance = _todayAttendance;
     try {
       if (attendance == null) {
-        await widget.repository.checkIn(widget.staff.id);
+        try {
+          await widget.repository.checkIn(widget.staff.id);
+        } on ApiException catch (e) {
+          if (e.statusCode == 400 &&
+              e.message.toLowerCase().contains('already checked in')) {
+            await widget.repository.fetchStaffAttendance();
+            if (_todayAttendance != null) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text(
+                          'Attendance reconciled: you are already checked in for today.')),
+                );
+              }
+              return;
+            }
+          }
+          rethrow;
+        } catch (e) {
+          if (e.toString().toLowerCase().contains('already checked in')) {
+            await widget.repository.fetchStaffAttendance();
+            if (_todayAttendance != null) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text(
+                          'Attendance reconciled: you are already checked in for today.')),
+                );
+              }
+              return;
+            }
+          }
+          rethrow;
+        }
         return;
       }
 
-      if (attendance.checkOutTime != null) return;
+      if (attendance.checkOutAt != null || attendance.checkOutTime != null)
+        return;
 
       final shouldCheckOut = await showDialog<bool>(
         context: context,
@@ -176,17 +282,34 @@ class _StaffHubShellState extends State<StaffHubShell> {
       if (shouldCheckOut != true || !mounted) return;
       await widget.repository.checkOut(attendance.id);
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))));
+      if (mounted) {
+        final message = error is ApiException && error.isUnauthorized
+            ? 'Your session has expired. Please sign in again.'
+            : error.toString().replaceFirst('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPunching = false);
+      }
     }
   }
 
-  Future<void> _toggleBreak() async {
+  Future<void> _toggleBreak(String? breakType) async {
     final attendance = _todayAttendance;
     if (attendance == null) return;
     try {
-      await widget.repository.toggleBreak(attendance.id);
+      await widget.repository.toggleBreak(attendance.id, breakType: breakType);
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))));
+      if (mounted) {
+        final message = error is ApiException && error.isUnauthorized
+            ? 'Your session has expired. Please sign in again.'
+            : error.toString().replaceFirst('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(message)));
+      }
     }
   }
 
@@ -210,6 +333,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
       0 => _ProfilePage(
           onLogout: widget.onLogout,
           staff: widget.staff,
+          repository: widget.repository,
           department: widget.department,
           workMode: widget.workMode,
           workLocation: widget.workLocation),
@@ -226,29 +350,34 @@ class _StaffHubShellState extends State<StaffHubShell> {
           onLeaveChanged: (value) =>
               setState(() => _leaveStatusNotifications = value),
           onPunchChanged: (value) => setState(() => _punchReminders = value)),
-        4 => _AppearancePage(
-          themeMode: widget.themeMode,
-          onChanged: widget.onThemeModeChanged),
+      4 => _AppearancePage(
+          themeMode: widget.themeMode, onChanged: widget.onThemeModeChanged),
       5 => const _SettingsDetailPage(
           icon: Icons.help_outline,
           title: 'Help & Support',
           description: 'Get help with StaffHub'),
-      6 => const _SettingsDetailPage(
-          icon: Icons.info_outline,
-          title: 'About StaffHub',
-          description: 'App information and version'),
-        7 => const _SettingsDocumentPage(
-          title: 'Privacy Policy',
-          content: '''Your privacy is important to us.
+      6 => _AboutPage(
+          onOpenTerms: () => setState(() => _settingsSubPage = 8),
+          onOpenPrivacyPolicy: () => setState(() => _settingsSubPage = 7),
+          onOpenLicenses: () => showLicensePage(
+            context: context,
+            applicationName: 'LY Staff Management',
+            applicationVersion: '1.0.0',
+            applicationLegalese: '© 2026 LY Softwares. All rights reserved.',
+          ),
+        ),
+      7 => const _SettingsDocumentPage(
+          title: 'Privacy Policy', content: '''Your privacy is important to us.
 
     This application collects user information such as name, email, phone number and address for account management and application functionality.
 
     Your information will be handled securely and will not be shared unnecessarily with third parties.
 
     By using this application, you agree to the collection and use of information as described in this Privacy Policy.'''),
-        8 => const _SettingsDocumentPage(
+      8 => const _SettingsDocumentPage(
           title: 'Terms & Conditions',
-          content: '''By using this application, you agree to follow the rules and conditions of the application.
+          content:
+              '''By using this application, you agree to follow the rules and conditions of the application.
 
     Users are responsible for keeping their account information secure.
 
@@ -276,19 +405,31 @@ class _StaffHubShellState extends State<StaffHubShell> {
           onToggle: _togglePunch,
           attendance: _todayAttendance,
           onToggleBreak: _toggleBreak,
-          leaveRequest: _leaveRequest,
+          leaveRequest: _latestLeaveRequest,
+          staffId: widget.staff.id,
           department: widget.department,
           staffName: widget.staff.name,
+          repository: widget.repository,
           workMode: widget.workMode,
-          workLocation: widget.workLocation),
+          workLocation: widget.workLocation,
+          isLoadingAttendance: _isLoadingAttendance,
+          isPunching: _isPunching,
+          attendanceError: _attendanceError,
+          onRetryAttendance: _loadAttendance),
       _PunchPage(
         checkedIn: _checkedIn,
         checkInTime: _checkInTime,
         checkOutTime: _checkOutTime,
         onToggle: _togglePunch,
         attendance: _todayAttendance,
-        onToggleBreak: _toggleBreak,
-        attendanceRecords: widget.repository.attendanceList.value.where((a) => a.staffId == widget.staff.id).toList(),
+        onToggleBreak: () => _toggleBreak(null),
+        isPunching: _isPunching,
+        attendanceRecords: widget.repository.attendanceList.value
+            .where((a) =>
+                widget.staff.id.isEmpty ||
+                a.staffId.isEmpty ||
+                a.staffId == widget.staff.id)
+            .toList(),
       ),
       _LeavePage(
         repository: widget.repository,
@@ -307,157 +448,163 @@ class _StaffHubShellState extends State<StaffHubShell> {
             3 => 'Notifications',
             4 => 'Appearance',
             5 => 'Help & Support',
-            6 => 'About StaffHub',
+            6 => 'About',
             7 => 'Privacy Policy',
             8 => 'Terms & Conditions',
             _ => 'Settings',
           }
         : titles[widget.pageIndex];
-      final isChatPage = widget.pageIndex == 3 && _settingsSubPage == 2;
+    final isChatPage = widget.pageIndex == 3 && _settingsSubPage == 2;
     return Theme(
       data: staffTheme,
       child: MediaQuery(
-      data: MediaQuery.of(context).copyWith(
-        textScaler: const TextScaler.linear(1.15),
-      ),
-      child: Scaffold(
-        backgroundColor: staffTheme.scaffoldBackgroundColor,
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(52),
-          child: AppBar(
-            backgroundColor: colorScheme.surface,
-            surfaceTintColor: colorScheme.surface,
-            elevation: 0,
-            titleSpacing: 14,
-            leading: widget.pageIndex == 3 && _settingsSubPage != null
-                ? IconButton(
-                  icon: Icon(Icons.arrow_back, color: colorScheme.onSurface),
-                    onPressed: () => setState(() => _settingsSubPage = null),
-                  )
-                : null,
-            title: isChatPage
-              ? Text('Chat',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: colorScheme.onSurface))
-              : Row(children: [
-              Container(
-                  width: 24,
-                  height: 24,
+        data: MediaQuery.of(context).copyWith(
+          textScaler: const TextScaler.linear(1.15),
+        ),
+        child: Scaffold(
+          backgroundColor: staffTheme.scaffoldBackgroundColor,
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(52),
+            child: AppBar(
+              backgroundColor: colorScheme.surface,
+              surfaceTintColor: colorScheme.surface,
+              elevation: 0,
+              titleSpacing: 14,
+              leading: widget.pageIndex == 3 && _settingsSubPage != null
+                  ? IconButton(
+                      icon:
+                          Icon(Icons.arrow_back, color: colorScheme.onSurface),
+                      onPressed: () => setState(() => _settingsSubPage = null),
+                    )
+                  : null,
+              title: isChatPage
+                  ? Text('Chat',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: colorScheme.onSurface))
+                  : Row(children: [
+                      Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                              color: colorScheme.primary,
+                              borderRadius: BorderRadius.circular(7)),
+                          child: Icon(Icons.badge_outlined,
+                              size: 15, color: colorScheme.onPrimary)),
+                      const SizedBox(width: 8),
+                      Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('StaffHub',
+                                style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: colorScheme.onSurface)),
+                            Text(pageTitle,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: colorScheme.onSurfaceVariant)),
+                          ]),
+                    ]),
+              actions: [
+                Container(
+                  margin: const EdgeInsets.only(right: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(
-                      color: colorScheme.primary,
-                      borderRadius: BorderRadius.circular(7)),
-                    child: Icon(Icons.badge_outlined,
-                      size: 15, color: colorScheme.onPrimary)),
-              const SizedBox(width: 8),
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('StaffHub',
-                  style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                    color: colorScheme.onSurface)),
-                Text(pageTitle,
-                  style: TextStyle(
-                    fontSize: 11, color: colorScheme.onSurfaceVariant)),
-              ]),
-            ]),
-            actions: [
-              Container(
-                margin: const EdgeInsets.only(right: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                decoration: BoxDecoration(
-                    color: const Color(0xffe9f0ff),
-                    borderRadius: BorderRadius.circular(16)),
-                child: Text(widget.department.toUpperCase(),
-                    style: TextStyle(
-                        fontSize: 10,
-                        color: _blue,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: .4)),
-              ),
-              if (!isChatPage)
-                IconButton(
-                  tooltip: 'Open chat',
-                  onPressed: _openChat,
-                  icon: Icon(Icons.chat_bubble_outline,
-                      size: 20, color: colorScheme.primary),
+                      color: const Color(0xffe9f0ff),
+                      borderRadius: BorderRadius.circular(16)),
+                  child: Text(widget.department.toUpperCase(),
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: _blue,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: .4)),
                 ),
-              if (isChatPage)
-                IconButton(
-                  tooltip: _chatSearchOpen
-                      ? 'Close search'
-                      : 'Search messages or staff',
-                  onPressed: _toggleChatSearch,
-                  icon: Icon(
-                      _chatSearchOpen ? Icons.close : Icons.search,
-                      size: 20,
-                      color: colorScheme.onSurfaceVariant),
-                ),
-              if (widget.pageIndex == 3 && _settingsSubPage == 3)
-                Icon(Icons.notifications_none,
-                    size: 19, color: colorScheme.onSurfaceVariant),
-              if (widget.pageIndex == 3 && _settingsSubPage == 3)
-                const SizedBox(width: 14),
-              // CircleAvatar(radius: 12, backgroundColor: const Color(0xffe2eaf8), child: Text('A', style: TextStyle(fontSize: 12, color: _blue, fontWeight: FontWeight.w700))),
-              // const SizedBox(width: 13),
-            ],
+                if (widget.pageIndex == 0)
+                  IconButton(
+                    tooltip: 'Open chat',
+                    onPressed: _openChat,
+                    icon: Icon(Icons.chat_bubble_outline,
+                        size: 20, color: colorScheme.primary),
+                  ),
+                if (isChatPage)
+                  IconButton(
+                    tooltip: _chatSearchOpen
+                        ? 'Close search'
+                        : 'Search messages or staff',
+                    onPressed: _toggleChatSearch,
+                    icon: Icon(_chatSearchOpen ? Icons.close : Icons.search,
+                        size: 20, color: colorScheme.onSurfaceVariant),
+                  ),
+                if (widget.pageIndex == 3 && _settingsSubPage == 3)
+                  Icon(Icons.notifications_none,
+                      size: 19, color: colorScheme.onSurfaceVariant),
+                if (widget.pageIndex == 3 && _settingsSubPage == 3)
+                  const SizedBox(width: 14),
+                // CircleAvatar(radius: 12, backgroundColor: const Color(0xffe2eaf8), child: Text('A', style: TextStyle(fontSize: 12, color: _blue, fontWeight: FontWeight.w700))),
+                // const SizedBox(width: 13),
+              ],
+            ),
+          ),
+          body: SafeArea(top: false, child: pages[widget.pageIndex]),
+          bottomNavigationBar: NavigationBarTheme(
+            data: NavigationBarThemeData(
+              iconTheme:
+                  WidgetStateProperty.resolveWith((states) => IconThemeData(
+                        color: states.contains(WidgetState.selected)
+                            ? colorScheme.onPrimaryContainer
+                            : colorScheme.onSurfaceVariant,
+                        size: 19,
+                      )),
+              labelTextStyle:
+                  WidgetStateProperty.resolveWith((states) => TextStyle(
+                        color: states.contains(WidgetState.selected)
+                            ? colorScheme.onPrimaryContainer
+                            : colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: states.contains(WidgetState.selected)
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                      )),
+            ),
+            child: NavigationBar(
+              height: 58,
+              selectedIndex: widget.pageIndex,
+              onDestinationSelected: (index) {
+                if (_settingsSubPage != null) {
+                  setState(() => _settingsSubPage = null);
+                }
+                if (index == 0 || index == 2) {
+                  unawaited(widget.repository.fetchStaffLeaves());
+                }
+                widget.onNavigate(index);
+              },
+              backgroundColor: colorScheme.surface,
+              indicatorColor: colorScheme.primaryContainer,
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              destinations: const [
+                NavigationDestination(
+                    icon: Icon(Icons.home_outlined, size: 19),
+                    selectedIcon: Icon(Icons.home, size: 19),
+                    label: 'Home'),
+                NavigationDestination(
+                    icon: Icon(Icons.fingerprint, size: 19),
+                    selectedIcon: Icon(Icons.fingerprint, size: 19),
+                    label: 'Punch'),
+                NavigationDestination(
+                    icon: Icon(Icons.calendar_month_outlined, size: 19),
+                    selectedIcon: Icon(Icons.calendar_month, size: 19),
+                    label: 'Leave'),
+                NavigationDestination(
+                    icon: Icon(Icons.settings_outlined, size: 19),
+                    selectedIcon: Icon(Icons.settings, size: 19),
+                    label: 'Settings'),
+              ],
+            ),
           ),
         ),
-        body: SafeArea(top: false, child: pages[widget.pageIndex]),
-        bottomNavigationBar: NavigationBarTheme(
-          data: NavigationBarThemeData(
-            iconTheme: WidgetStateProperty.resolveWith((states) =>
-                IconThemeData(
-                  color: states.contains(WidgetState.selected)
-                      ? colorScheme.onPrimaryContainer
-                      : colorScheme.onSurfaceVariant,
-                  size: 19,
-                )),
-            labelTextStyle: WidgetStateProperty.resolveWith((states) =>
-                TextStyle(
-                  color: states.contains(WidgetState.selected)
-                      ? colorScheme.onPrimaryContainer
-                      : colorScheme.onSurfaceVariant,
-                  fontSize: 12,
-                  fontWeight: states.contains(WidgetState.selected)
-                      ? FontWeight.w600
-                      : FontWeight.w500,
-                )),
-          ),
-          child: NavigationBar(
-            height: 58,
-            selectedIndex: widget.pageIndex,
-            onDestinationSelected: (index) {
-              if (_settingsSubPage != null) {
-                setState(() => _settingsSubPage = null);
-              }
-              widget.onNavigate(index);
-            },
-            backgroundColor: colorScheme.surface,
-            indicatorColor: colorScheme.primaryContainer,
-            labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-            destinations: const [
-            NavigationDestination(
-                icon: Icon(Icons.home_outlined, size: 19),
-                selectedIcon: Icon(Icons.home, size: 19),
-                label: 'Home'),
-            NavigationDestination(
-                icon: Icon(Icons.fingerprint, size: 19),
-                selectedIcon: Icon(Icons.fingerprint, size: 19),
-                label: 'Punch'),
-            NavigationDestination(
-                icon: Icon(Icons.calendar_month_outlined, size: 19),
-                selectedIcon: Icon(Icons.calendar_month, size: 19),
-                label: 'Leave'),
-            NavigationDestination(
-                icon: Icon(Icons.settings_outlined, size: 19),
-                selectedIcon: Icon(Icons.settings, size: 19),
-                label: 'Settings'),
-            ],
-          ),
-        ),
-      ),
       ),
     );
   }
@@ -473,67 +620,147 @@ class _HomePage extends StatefulWidget {
       required this.attendance,
       required this.onToggleBreak,
       required this.leaveRequest,
+      required this.staffId,
       required this.department,
       required this.staffName,
+      required this.repository,
       required this.workMode,
-      required this.workLocation});
+      required this.workLocation,
+      this.isLoadingAttendance = false,
+      this.isPunching = false,
+      this.attendanceError,
+      this.onRetryAttendance});
   final VoidCallback onPunch, onToggle;
-  final Future<void> Function() onToggleBreak;
+  final Future<void> Function(String? breakType) onToggleBreak;
   final Attendance? attendance;
   final bool checkedIn;
   final DateTime checkInTime;
   final DateTime? checkOutTime;
   final _LeaveRequestInfo? leaveRequest;
+  final String staffId;
   final String department;
   final String staffName;
+  final HRRepository repository;
   final String workMode;
   final String? workLocation;
+  final bool isLoadingAttendance;
+  final bool isPunching;
+  final String? attendanceError;
+  final VoidCallback? onRetryAttendance;
   @override
   State<_HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<_HomePage> {
-  String _workUpdateTitle = 'Today\'s Work Update';
-  String _workUpdate =
-      'Completed client installation at Apex Tower and synced hardware logs with the team.';
-  String _workStatus = 'Completed';
+  // Daily update state
+  bool _isLoadingUpdate = false;
+  bool _breakActionInFlight = false;
+  String? _updateError;
   late final Timer _activeTimeTimer;
 
   @override
   void initState() {
     super.initState();
-    _activeTimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+    _activeTimeTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {});
+        if (timer.tick % 10 == 0) {
+          unawaited(widget.repository.fetchStaffLeaves());
+        }
+      }
     });
+    widget.repository.dailyUpdatesList.addListener(_onUpdatesChanged);
+    widget.repository.leaveRequests.addListener(_onLeavesChanged);
+    _refreshDailyUpdates();
+    unawaited(widget.repository.fetchStaffLeaves());
+  }
+
+  void _onUpdatesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onLeavesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  _LeaveRequestInfo? get _displayLeaveRequest {
+    final list = widget.repository.leaveRequests.value;
+    final staffId = widget.staffId;
+    final myRequests = list
+        .where((r) =>
+            staffId.isEmpty ||
+            r.staffId.isEmpty ||
+            r.staffId == staffId)
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final latest = myRequests.firstOrNull;
+    if (latest != null) {
+      return _LeaveRequestInfo.fromLeaveRequest(latest);
+    }
+    return widget.leaveRequest;
+  }
+
+  Future<void> _refreshDailyUpdates() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingUpdate = true;
+      _updateError = null;
+    });
+    try {
+      await widget.repository.fetchDailyUpdates();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _updateError = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingUpdate = false);
+    }
   }
 
   @override
   void dispose() {
     _activeTimeTimer.cancel();
+    widget.repository.dailyUpdatesList.removeListener(_onUpdatesChanged);
+    widget.repository.leaveRequests.removeListener(_onLeavesChanged);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant _HomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository) {
+      oldWidget.repository.dailyUpdatesList.removeListener(_onUpdatesChanged);
+      oldWidget.repository.leaveRequests.removeListener(_onLeavesChanged);
+      widget.repository.dailyUpdatesList.addListener(_onUpdatesChanged);
+      widget.repository.leaveRequests.addListener(_onLeavesChanged);
+      _refreshDailyUpdates();
+      unawaited(widget.repository.fetchStaffLeaves());
+    }
+  }
+
+  DailyUpdate? get _latestUpdate {
+    final updates = widget.repository.dailyUpdatesList.value;
+    if (updates.isEmpty) return null;
+    return updates.first;
   }
 
   Future<void> _editWorkUpdate() async {
+    final latest = _latestUpdate;
     final updated = await Navigator.of(context).push<_WorkUpdateResult>(
       MaterialPageRoute(
         builder: (_) => _EditWorkUpdatePage(
-          initialTitle: _workUpdateTitle,
-          initialValue: _workUpdate,
-          initialStatus: _workStatus,
+          initialTitle: latest?.title ?? '',
+          initialValue: latest?.updateText ?? '',
+          repository: widget.repository,
         ),
       ),
     );
+    // After returning from the edit page, the repository list was already
+    // updated on success. Re-fetch to confirm persistence.
     if (mounted && updated != null) {
-      setState(() {
-        _workUpdateTitle = updated.title;
-        _workUpdate = updated.text;
-        _workStatus = updated.status;
-      });
+      unawaited(_refreshDailyUpdates());
     }
   }
 
@@ -544,31 +771,29 @@ class _HomePageState extends State<_HomePage> {
         : '09:00 AM – 06:00 PM';
     final now = DateTime.now();
     final attendance = widget.attendance;
-    final activeBreaks = attendance?.breaks.where((b) => b.isActive).toList() ?? [];
+    final apiStatus = attendance?.status.trim();
+    final attendanceStatus = attendance?.isLate == true
+        ? 'Late'
+        : apiStatus == null || apiStatus.isEmpty || apiStatus.toUpperCase() == 'PRESENT'
+            ? 'Working'
+            : '${apiStatus[0].toUpperCase()}${apiStatus.substring(1).toLowerCase()}';
+    final activeBreaks =
+        attendance?.breaks.where((b) => b.isActive).toList() ?? [];
     final activeBreak = activeBreaks.isEmpty ? null : activeBreaks.first;
-    final completedCount = attendance?.breaks.length ?? 0;
-    final nextBreakIndex = completedCount < AttendanceBreakSchedule.names.length
-      ? completedCount
-      : null;
-    final nextBreakName = nextBreakIndex == null
-      ? null
-      : AttendanceBreakSchedule.names[nextBreakIndex];
-    final nextBreakStartText = nextBreakIndex == null
-      ? null
-      : TimeOfDay(
-        hour: AttendanceBreakSchedule.startTimes[nextBreakIndex].$1,
-        minute: AttendanceBreakSchedule.startTimes[nextBreakIndex].$2,
-        ).format(context);
-    final canStartNextBreak = nextBreakIndex != null &&
-      AttendanceBreakSchedule.canStart(now, nextBreakIndex);
-    final hasRemainingBreak = nextBreakIndex != null;
+    
     final hasActiveShift = widget.checkedIn || widget.checkOutTime != null;
     final endTime = widget.checkOutTime ?? DateTime.now();
-    final breakSeconds = attendance?.breaks.fold<int>(0, (sum, b) => sum + b.durationAt(now)) ?? 0;
-    final tracked = hasActiveShift
+    final breakSeconds =
+        attendance?.breaks.fold<int>(0, (sum, b) => sum + b.durationAt(now)) ??
+            0;
+    var tracked = hasActiveShift
         ? endTime.difference(widget.checkInTime) -
-            Duration(seconds: attendance?.checkOutAt == null ? breakSeconds : attendance?.totalBreakSeconds ?? 0)
+            Duration(
+                seconds: attendance?.checkOutAt == null
+                    ? breakSeconds
+                    : attendance?.totalBreakSeconds ?? 0)
         : Duration.zero;
+    if (tracked.isNegative) tracked = Duration.zero;
     final trackedText =
         '${tracked.inHours.toString().padLeft(2, '0')}:${tracked.inMinutes.remainder(60).toString().padLeft(2, '0')}:${tracked.inSeconds.remainder(60).toString().padLeft(2, '0')}';
     final checkInText = hasActiveShift
@@ -577,19 +802,10 @@ class _HomePageState extends State<_HomePage> {
     final checkOutText = widget.checkOutTime == null
         ? 'Not checked out'
         : 'Checked out at ${TimeOfDay.fromDateTime(widget.checkOutTime!).format(context)}';
-    final breakElapsed = activeBreak == null ? Duration.zero : DateTime.now().difference(activeBreak.startTime);
-    final breakRemainingSeconds = activeBreak == null
-      ? 0
-      : (activeBreak.allowanceSeconds - breakElapsed.inSeconds)
-        .clamp(0, activeBreak.allowanceSeconds)
-        .toInt();
-    final breakRemainingText =
-      '${(breakRemainingSeconds ~/ 60).toString().padLeft(2, '0')}:${(breakRemainingSeconds % 60).toString().padLeft(2, '0')}';
-
+    final activeLeave = _displayLeaveRequest;
     return _ScrollPage(children: [
       const SizedBox(height: 12),
-      Text('Wednesday, 24 Sep',
-          style: TextStyle(fontSize: 14, color: _muted)),
+      Text('Wednesday, 24 Sep', style: TextStyle(fontSize: 14, color: _muted)),
       const SizedBox(height: 5),
       Row(children: [
         Expanded(
@@ -607,6 +823,41 @@ class _HomePageState extends State<_HomePage> {
             style: TextStyle(fontSize: 12, color: _muted)),
       ],
       const SizedBox(height: 18),
+      if (widget.attendanceError != null) ...[
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xffffeeee),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+                color: const Color(0xffd84747).withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 18, color: Color(0xffd84747)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  widget.attendanceError!,
+                  style:
+                      const TextStyle(fontSize: 12, color: Color(0xffd84747)),
+                ),
+              ),
+              if (widget.onRetryAttendance != null)
+                TextButton(
+                  onPressed: widget.onRetryAttendance,
+                  child: const Text('Retry',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xffd84747))),
+                ),
+            ],
+          ),
+        ),
+      ],
       _ProfileCard(
           child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
@@ -618,19 +869,23 @@ class _HomePageState extends State<_HomePage> {
                           activeBreak != null
                               ? 'Break in Progress'
                               : widget.checkedIn
-                                  ? 'Working'
+                                  ? attendanceStatus
                                   : hasActiveShift
                                       ? 'Shift Complete'
                                       : 'Not Checked In',
                           activeBreak != null
                               ? const Color(0xfffff3d6)
                               : widget.checkedIn
-                                  ? const Color(0xffe8f8ef)
+                                  ? attendance?.isLate == true
+                                      ? const Color(0xfffff3d6)
+                                      : const Color(0xffe8f8ef)
                                   : const Color(0xffffeeee),
                           activeBreak != null
                               ? const Color(0xffa66a16)
                               : widget.checkedIn
-                                  ? const Color(0xff198754)
+                                  ? attendance?.isLate == true
+                                      ? const Color(0xffa66a16)
+                                      : const Color(0xff198754)
                                   : const Color(0xffd84747)),
                       const SizedBox(width: 8),
                       Expanded(
@@ -638,25 +893,43 @@ class _HomePageState extends State<_HomePage> {
                               alignment: Alignment.centerRight,
                               child: Text('Shift: $shiftText',
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      fontSize: 11, color: _muted))))
+                                  style:
+                                      TextStyle(fontSize: 11, color: _muted))))
                     ]),
                     const SizedBox(height: 16),
                     Text('ACTIVE TIME',
                         style: TextStyle(
                             fontSize: 12, color: _muted, letterSpacing: .5)),
-                    Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                      Text(trackedText,
-                          style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w700,
-                              color: _ink)),
-                      const SizedBox(width: 5),
-                      Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('hrs',
-                              style: TextStyle(fontSize: 12, color: _muted)))
-                    ]),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(trackedText,
+                                  style: TextStyle(
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.w700,
+                                      color: _ink)),
+                              const SizedBox(width: 5),
+                              Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text('hrs',
+                                      style: TextStyle(
+                                          fontSize: 12, color: _muted)))
+                            ]),
+                        if (widget.isLoadingAttendance)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 6),
+                            child: SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                      ],
+                    ),
                     Text(
                         widget.checkOutTime != null
                             ? checkOutText
@@ -665,66 +938,79 @@ class _HomePageState extends State<_HomePage> {
                                 : 'Please check in to start your shift',
                         style: TextStyle(fontSize: 12, color: _muted)),
                     const SizedBox(height: 6),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          activeBreak != null
-                              ? 'Break in Progress'
-                              : nextBreakName == null
-                                  ? 'All breaks completed'
-                                  : 'Upcoming Break',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: _ink),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          activeBreak != null
-                              ? AttendanceBreakSchedule.nameForType(
-                                  activeBreak.breakType)
-                              : nextBreakName == null
-                                  ? '3 of 3 breaks used'
-                                  : '$nextBreakName · $nextBreakStartText',
-                          style: TextStyle(fontSize: 12, color: _muted),
-                        ),
-                        if (activeBreak != null) ...[
-                          const SizedBox(height: 2),
-                          Text('Remaining: $breakRemainingText',
-                              style: TextStyle(fontSize: 12, color: _muted)),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 12),
+                    Text('Breaks', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _ink)),
+                    const SizedBox(height: 4),
+                    for (var index = 0; index < AttendanceBreakSchedule.types.length; index++) ...[
+                      Builder(builder: (context) {
+                        final type = AttendanceBreakSchedule.types[index];
+                        final name = AttendanceBreakSchedule.names[index];
+                        final scheduled = TimeOfDay(
+                          hour: AttendanceBreakSchedule.startTimes[index].$1,
+                          minute: AttendanceBreakSchedule.startTimes[index].$2,
+                        ).format(context);
+                        final item = attendance?.breaks.where((b) => b.breakType == type).firstOrNull;
+                        final isActive = item?.isActive == true;
+                        final elapsed = isActive ? DateTime.now().difference(item!.startTime) : Duration.zero;
+                        final elapsedText = '${elapsed.inMinutes.toString().padLeft(2, '0')}:${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+                        final status = isActive ? 'On Break' : item != null ? 'Completed' : 'Available';
+                        final otherBreakActive = activeBreak != null && !isActive;
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Row(children: [
+                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _ink)),
+                              Text('Scheduled $scheduled · ${AttendanceBreak.allowanceSecondsFor(type) ~/ 60} min · $status${isActive ? ' · Started ${TimeOfDay.fromDateTime(item!.startTime).format(context)} · $elapsedText elapsed' : ''}', style: TextStyle(fontSize: 11, color: _muted)),
+                            ])),
+                            OutlinedButton(
+                              onPressed: !widget.checkedIn || _breakActionInFlight || otherBreakActive || (item != null && !isActive)
+                                  ? null
+                                  : () async {
+                                      setState(() => _breakActionInFlight = true);
+                                      try {
+                                        await widget.onToggleBreak(isActive ? null : type);
+                                      } finally {
+                                        if (mounted) setState(() => _breakActionInFlight = false);
+                                      }
+                                    },
+                              child: Text(isActive ? 'End Break' : item != null ? 'Completed' : 'Start Break'),
+                            ),
+                          ]),
+                        );
+                      }),
+                    ],
+                    const SizedBox(height: 8),
                     Row(children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: !widget.checkedIn ||
-                              (activeBreak == null &&
-                                (!hasRemainingBreak || !canStartNextBreak))
-                              ? null
-                              : () async { await widget.onToggleBreak(); },
-                          icon: const Icon(Icons.coffee_outlined, size: 15),
-                            label: Text(activeBreak == null ? 'Start Break' : 'End Break'),
-                        ),
-                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: widget.checkedIn || !hasActiveShift
-                              ? (activeBreak == null
-                                  ? widget.onToggle
-                                  : null)
-                              : null,
-                          icon: Icon(widget.checkedIn
-                              ? Icons.logout
-                              : Icons.login, size: 13),
-                          label: Text(widget.checkedIn
-                              ? 'Check Out'
-                              : hasActiveShift
-                                  ? 'Shift Complete'
-                                  : 'Check In',
+                          onPressed:
+                              (widget.isPunching || widget.isLoadingAttendance)
+                                  ? null
+                                  : (widget.checkedIn || !hasActiveShift
+                                      ? (activeBreak == null
+                                          ? widget.onToggle
+                                          : null)
+                                      : null),
+                          icon: widget.isPunching
+                              ? const SizedBox(
+                                  width: 13,
+                                  height: 13,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : Icon(
+                                  widget.checkedIn ? Icons.logout : Icons.login,
+                                  size: 13),
+                          label: Text(
+                              widget.isPunching
+                                  ? (widget.checkedIn
+                                      ? 'Checking out...'
+                                      : 'Checking in...')
+                                  : (widget.checkedIn
+                                      ? 'Check Out'
+                                      : hasActiveShift
+                                          ? 'Shift Complete'
+                                          : 'Check In'),
                               style: const TextStyle(fontSize: 12)),
                         ),
                       ),
@@ -740,11 +1026,13 @@ class _HomePageState extends State<_HomePage> {
                     Row(children: [
                       Expanded(
                           child: Row(children: [
-                        Icon(Icons.assignment_outlined,
-                            size: 15, color: _blue),
+                        Icon(Icons.assignment_outlined, size: 15, color: _blue),
                         const SizedBox(width: 6),
                         Expanded(
-                            child: Text(_workUpdateTitle,
+                            child: Text(
+                                _latestUpdate?.title.isNotEmpty == true
+                                    ? _latestUpdate!.title
+                                    : 'Daily Work Update',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -752,39 +1040,109 @@ class _HomePageState extends State<_HomePage> {
                                     color: _ink,
                                     fontWeight: FontWeight.w700)))
                       ])),
+                      if (_isLoadingUpdate)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 8),
+                          child: SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
                       TextButton(
-                          onPressed: _editWorkUpdate,
-                          child: Text('Edit Update  ›',
+                          onPressed: _isLoadingUpdate ? null : _editWorkUpdate,
+                          child: Text(
+                              _latestUpdate == null
+                                  ? 'Add Update  ›'
+                                  : 'Edit Update  ›',
                               style: TextStyle(fontSize: 12, color: _blue)))
                     ]),
+                    if (_updateError != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xffffeeee),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: const Color(0xffd84747)
+                                  .withValues(alpha: 0.3)),
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.error_outline,
+                              size: 14, color: Color(0xffd84747)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(_updateError!,
+                                style: const TextStyle(
+                                    fontSize: 11, color: Color(0xffd84747))),
+                          ),
+                          TextButton(
+                            onPressed: _refreshDailyUpdates,
+                            style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(40, 24),
+                                tapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap),
+                            child: const Text('Retry',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xffd84747))),
+                          )
+                        ]),
+                      ),
+                    ],
                     const SizedBox(height: 14),
                     Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: _fieldBg,
+                            color: _fieldBg,
                             borderRadius: BorderRadius.circular(10)),
-                        child: Text(_workUpdate,
-                            style: TextStyle(
-                                fontSize: 13, height: 1.45, color: _ink))),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      _pill(_workStatus, _workStatusBackground(_workStatus),
-                          _workStatusForeground(_workStatus)),
-                      const SizedBox(width: 8),
-                      Icon(Icons.check_circle,
-                          color: Color(0xff24a36a), size: 12),
-                      const SizedBox(width: 4),
-                      Flexible(
-                          child: Text('Submitted at 2:45 PM',
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 10, color: _muted))),
-                      const SizedBox(width: 8),
-                      Flexible(
-                          child: Text('✓ Synced',
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 10, color: _muted)))
-                    ]),
+                        child: _isLoadingUpdate && _latestUpdate == null
+                            ? const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  ),
+                                ),
+                              )
+                            : Text(
+                                _latestUpdate?.updateText.isNotEmpty == true
+                                    ? _latestUpdate!.updateText
+                                    : 'No update submitted yet. Tap "Add Update" to submit.',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.45,
+                                    color: _latestUpdate == null
+                                        ? _muted
+                                        : _ink))),
+                    if (_latestUpdate != null) ...[
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        Icon(Icons.check_circle,
+                            color: const Color(0xff24a36a), size: 12),
+                        const SizedBox(width: 4),
+                        Flexible(
+                            child: Text(
+                                _latestUpdate!.createdAt != null
+                                    ? 'Submitted at ${TimeOfDay.fromDateTime(_latestUpdate!.createdAt!).format(context)}'
+                                    : 'Submitted',
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 10, color: _muted))),
+                        const SizedBox(width: 8),
+                        Flexible(
+                            child: Text('✓ Synced',
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 10, color: _muted)))
+                      ]),
+                    ],
                   ]))),
       const SizedBox(height: 18),
       _ProfileCard(
@@ -801,7 +1159,7 @@ class _HomePageState extends State<_HomePage> {
                         style: TextStyle(
                             fontSize: 13, color: _muted, height: 1.45))
                   ]))),
-      if (widget.leaveRequest != null) ...[
+      if (activeLeave != null) ...[
         const SizedBox(height: 12),
         _ProfileCard(
             child: Padding(
@@ -814,7 +1172,7 @@ class _HomePageState extends State<_HomePage> {
                             child: Row(children: [
                           Icon(Icons.event_note_outlined,
                               size: 13, color: _blue),
-                          SizedBox(width: 5),
+                          const SizedBox(width: 5),
                           Text('Leave Request Update',
                               style: TextStyle(
                                   fontSize: 13,
@@ -822,22 +1180,22 @@ class _HomePageState extends State<_HomePage> {
                                   fontWeight: FontWeight.w700))
                         ])),
                         _pill(
-                            widget.leaveRequest!.status,
-                            _statusBackground(widget.leaveRequest!.status),
-                            _statusForeground(widget.leaveRequest!.status)),
+                            activeLeave.status,
+                            _statusBackground(activeLeave.status),
+                            _statusForeground(activeLeave.status)),
                       ]),
                       const SizedBox(height: 10),
                       Text(
-                          '${widget.leaveRequest!.type} · ${widget.leaveRequest!.dates}',
+                          '${activeLeave.type} · ${activeLeave.dates}',
                           style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: _ink)),
                       const SizedBox(height: 5),
-                      Text('Reason: ${widget.leaveRequest!.reason}',
+                      Text('Reason: ${activeLeave.reason}',
                           style: TextStyle(fontSize: 11, color: _ink)),
                       const SizedBox(height: 5),
-                      Text(widget.leaveRequest!.message,
+                      Text(activeLeave.message,
                           style: TextStyle(
                               fontSize: 12, color: _muted, height: 1.4)),
                     ]))),
@@ -847,20 +1205,20 @@ class _HomePageState extends State<_HomePage> {
 }
 
 class _WorkUpdateResult {
-  const _WorkUpdateResult(this.title, this.text, this.status);
+  const _WorkUpdateResult(this.title, this.text);
   final String title;
   final String text;
-  final String status;
 }
 
 class _EditWorkUpdatePage extends StatefulWidget {
-  const _EditWorkUpdatePage(
-      {required this.initialTitle,
-      required this.initialValue,
-      required this.initialStatus});
+  const _EditWorkUpdatePage({
+    required this.initialTitle,
+    required this.initialValue,
+    required this.repository,
+  });
   final String initialTitle;
   final String initialValue;
-  final String initialStatus;
+  final HRRepository repository;
 
   @override
   State<_EditWorkUpdatePage> createState() => _EditWorkUpdatePageState();
@@ -869,7 +1227,7 @@ class _EditWorkUpdatePage extends StatefulWidget {
 class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
   late final TextEditingController _titleController;
   late final TextEditingController _controller;
-  late String _status;
+  bool _isSaving = false;
 
   bool get _hasChanges =>
       _titleController.text.trim() != widget.initialTitle ||
@@ -880,7 +1238,6 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
     super.initState();
     _titleController = TextEditingController(text: widget.initialTitle);
     _controller = TextEditingController(text: widget.initialValue);
-    _status = widget.initialStatus;
   }
 
   @override
@@ -895,16 +1252,16 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
     return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: Text('Discard changes?'),
+            title: const Text('Discard changes?'),
             content:
-                Text('Your work update changes have not been saved.'),
+                const Text('Your work update changes have not been saved.'),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context, false),
-                  child: Text('Keep Editing')),
+                  child: const Text('Keep Editing')),
               TextButton(
                   onPressed: () => Navigator.pop(context, true),
-                  child: Text('Discard Changes')),
+                  child: const Text('Discard Changes')),
             ],
           ),
         ) ??
@@ -912,10 +1269,12 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
   }
 
   Future<void> _handleBack() async {
+    if (_isSaving) return;
     if (await _confirmDiscard() && mounted) Navigator.of(context).pop();
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_isSaving) return; // Prevent duplicate submissions
     final title = _titleController.text.trim();
     final text = _controller.text.trim();
     if (title.isEmpty || text.isEmpty) {
@@ -923,12 +1282,26 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
           content: Text('Enter a title and details before saving.')));
       return;
     }
-    Navigator.of(context).pop(_WorkUpdateResult(title, text, _status));
+    setState(() => _isSaving = true);
+    try {
+      await widget.repository.submitDailyUpdate(title, text);
+      if (mounted) {
+        Navigator.of(context).pop(_WorkUpdateResult(title, text));
+      }
+    } catch (e) {
+      if (mounted) {
+        // Keep form open and show the actual API error
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', ''))));
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) => PopScope(
-        canPop: !_hasChanges,
+        canPop: !_hasChanges && !_isSaving,
         onPopInvoked: (didPop) {
           if (!didPop) _handleBack();
         },
@@ -940,13 +1313,13 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
             elevation: 0,
             leading: IconButton(
                 icon: Icon(Icons.arrow_back, color: _ink),
-                onPressed: _handleBack),
+                onPressed: _isSaving ? null : _handleBack),
             title: Text('Edit Work Update',
                 style: TextStyle(
                     fontSize: 17, fontWeight: FontWeight.w700, color: _ink)),
             actions: [
               TextButton(
-                  onPressed: _handleBack,
+                  onPressed: _isSaving ? null : _handleBack,
                   child: Text('Cancel', style: TextStyle(color: _blue)))
             ],
           ),
@@ -964,6 +1337,7 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: _titleController,
+                      enabled: !_isSaving,
                       style: TextStyle(fontSize: 16, color: _ink),
                       decoration: _fieldDecoration(hint: 'Enter update title'),
                     ),
@@ -979,11 +1353,12 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                         controller: _controller,
                         autofocus: true,
                         expands: true,
+                        enabled: !_isSaving,
                         minLines: null,
                         maxLines: null,
                         textAlignVertical: TextAlignVertical.top,
-                        style: TextStyle(
-                            fontSize: 14, height: 1.5, color: _ink),
+                        style:
+                            TextStyle(fontSize: 14, height: 1.5, color: _ink),
                         decoration: InputDecoration(
                           hintText: 'Enter today\'s work update',
                           filled: true,
@@ -1006,14 +1381,23 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                       width: double.infinity,
                       height: 46,
                       child: FilledButton(
-                        onPressed: _save,
+                        onPressed: _isSaving ? null : _save,
                         style: FilledButton.styleFrom(
                             backgroundColor: _blue,
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10))),
-                        child: Text('Save Update',
-                            style: TextStyle(
-                                fontSize: 14, fontWeight: FontWeight.w600)),
+                        child: _isSaving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Save Update',
+                                style: TextStyle(
+                                    fontSize: 14, fontWeight: FontWeight.w600)),
                       ),
                     ),
                   ]),
@@ -1043,7 +1427,8 @@ class _PunchPage extends StatefulWidget {
       required this.onToggle,
       required this.attendance,
       required this.onToggleBreak,
-      required this.attendanceRecords});
+      required this.attendanceRecords,
+      this.isPunching = false});
   final bool checkedIn;
   final DateTime checkInTime;
   final DateTime? checkOutTime;
@@ -1051,6 +1436,7 @@ class _PunchPage extends StatefulWidget {
   final Attendance? attendance;
   final Future<void> Function() onToggleBreak;
   final List<Attendance> attendanceRecords;
+  final bool isPunching;
   @override
   State<_PunchPage> createState() => _PunchPageState();
 }
@@ -1076,10 +1462,14 @@ class _PunchPageState extends State<_PunchPage> {
   Widget build(BuildContext context) {
     final hasActiveShift = widget.checkedIn || widget.checkOutTime != null;
     final endTime = widget.checkOutTime ?? DateTime.now();
-    final tracked = hasActiveShift
-        ? endTime.difference(widget.checkInTime) - Duration(seconds:
-            widget.attendance?.breaks.fold<int>(0, (sum, b) => sum + b.durationAt(DateTime.now())) ?? 0)
+    var tracked = hasActiveShift
+        ? endTime.difference(widget.checkInTime) -
+            Duration(
+                seconds: widget.attendance?.breaks.fold<int>(
+                        0, (sum, b) => sum + b.durationAt(DateTime.now())) ??
+                    0)
         : Duration.zero;
+    if (tracked.isNegative) tracked = Duration.zero;
     final trackedHours = tracked.inHours;
     final trackedMinutes = tracked.inMinutes.remainder(60);
     final trackedText =
@@ -1090,7 +1480,6 @@ class _PunchPageState extends State<_PunchPage> {
     final checkOutText = widget.checkOutTime == null
         ? 'Pending'
         : TimeOfDay.fromDateTime(widget.checkOutTime!).format(context);
-
     return _ScrollPage(children: [
       const SizedBox(height: 14),
       Row(children: [
@@ -1143,25 +1532,46 @@ class _PunchPageState extends State<_PunchPage> {
                 ? const Color(0xffe6a328)
                 : const Color(0xff258154)),
         const SizedBox(height: 14),
-        _timeline(Icons.coffee_outlined, 'Break Time',
+        _timeline(
+            Icons.coffee_outlined,
+            'Break Time',
             '${widget.attendance?.breaks.length ?? 0} break${(widget.attendance?.breaks.length ?? 0) == 1 ? '' : 's'}',
-            _formatShortDuration(widget.attendance?.breaks.fold<int>(0, (sum, b) => sum + b.durationAt(DateTime.now())) ?? 0),
+            _formatShortDuration(widget.attendance?.breaks.fold<int>(
+                    0, (sum, b) => sum + b.durationAt(DateTime.now())) ??
+                0),
             const Color(0xffa66a16)),
       ])),
       if (widget.attendance?.breaks.isNotEmpty == true) ...[
         const SizedBox(height: 14),
-        Text('Break Details', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _ink)),
+        Text('Break Details',
+            style: TextStyle(
+                fontSize: 15, fontWeight: FontWeight.w700, color: _ink)),
         const SizedBox(height: 8),
-        _ProfileCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _ProfileCard(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           for (final item in widget.attendance!.breaks)
-            Padding(padding: const EdgeInsets.symmetric(vertical: 7), child: Row(children: [
-              const Icon(Icons.coffee_outlined, size: 18, color: Color(0xffa66a16)),
-              const SizedBox(width: 9),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('${_breakTypeLabel(item.breakType)} · ${TimeOfDay.fromDateTime(item.startTime).format(context)} – ${item.endTime == null ? 'Active' : TimeOfDay.fromDateTime(item.endTime!).format(context)}', style: TextStyle(fontSize: 13, color: _ink, fontWeight: FontWeight.w600)),
-                Text('${_formatShortDuration(item.durationAt(DateTime.now()))} · ${item.isActive ? 'On Break' : 'Completed'}', style: TextStyle(fontSize: 12, color: _muted)),
-              ])),
-            ])),
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 7),
+                child: Row(children: [
+                  const Icon(Icons.coffee_outlined,
+                      size: 18, color: Color(0xffa66a16)),
+                  const SizedBox(width: 9),
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Text(
+                            '${_breakTypeLabel(item.breakType)} · ${TimeOfDay.fromDateTime(item.startTime).format(context)} – ${item.endTime == null ? 'Active' : TimeOfDay.fromDateTime(item.endTime!).format(context)}',
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: _ink,
+                                fontWeight: FontWeight.w600)),
+                        Text(
+                            '${_formatShortDuration(item.durationAt(DateTime.now()))} · ${item.isActive ? 'On Break' : 'Completed'}',
+                            style: TextStyle(fontSize: 12, color: _muted)),
+                      ])),
+                ])),
         ])),
       ],
       const SizedBox(height: 14),
@@ -1173,29 +1583,66 @@ class _PunchPageState extends State<_PunchPage> {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (widget.attendanceRecords.isEmpty)
-          Text('No attendance records yet', style: TextStyle(color: _muted, fontSize: 13)),
+          Text('No attendance records yet',
+              style: TextStyle(color: _muted, fontSize: 13)),
         for (final item in widget.attendanceRecords)
-          _historyRow(item.date, '${item.checkInTime} – ${item.checkOutTime ?? 'Pending'}', item.checkOutTime == null ? 'In Progress' : 'Present')
+          _historyRow(
+              item.date,
+              '${item.checkInTime} – ${item.checkOutTime ?? 'Pending'}',
+              item.checkOutTime == null ? 'In Progress' : 'Present')
       ])),
       const SizedBox(height: 18),
       SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
-              onPressed: widget.checkedIn || widget.checkOutTime == null
-                  ? widget.onToggle
-                  : null,
-              icon:
-                  Icon(widget.checkedIn ? Icons.logout : Icons.login, size: 15),
-              label: Text(widget.checkedIn
-                  ? 'Check Out'
-                  : widget.checkOutTime != null
-                      ? 'Shift Complete'
-                      : 'Check In'),
+              onPressed: widget.isPunching
+                  ? null
+                  : (widget.checkedIn || widget.checkOutTime == null
+                      ? widget.onToggle
+                      : null),
+              icon: widget.isPunching
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : Icon(widget.checkedIn ? Icons.logout : Icons.login,
+                      size: 15),
+              label: Text(widget.isPunching
+                  ? (widget.checkedIn ? 'Checking out...' : 'Checking in...')
+                  : (widget.checkedIn
+                      ? 'Check Out'
+                      : widget.checkOutTime != null
+                          ? 'Shift Complete'
+                          : 'Check In')),
               style: FilledButton.styleFrom(
                   backgroundColor:
                       widget.checkedIn ? const Color(0xffd84747) : _blue))),
     ]);
   }
+}
+
+String _formatDateString(String iso) {
+  final d = DateTime.tryParse(iso);
+  if (d == null) return iso;
+  const months = [
+    '',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ];
+  final month = (d.month >= 1 && d.month <= 12) ? months[d.month] : '';
+  return '${d.day} $month ${d.year}';
 }
 
 class _LeaveRequestInfo {
@@ -1213,9 +1660,38 @@ class _LeaveRequestInfo {
   final String? documentPath;
   final String status;
 
-  String get message => status == 'Pending'
-      ? 'Your request was submitted and is waiting for HR approval.'
-      : 'Your request was $status.';
+  String get message {
+    switch (status.trim().toLowerCase()) {
+      case 'approved':
+        return 'Your request has been approved by HR.';
+      case 'rejected':
+      case 'denied':
+        return 'Your request was rejected by HR.';
+      case 'pending':
+        return 'Your request was submitted and is waiting for HR approval.';
+      default:
+        return 'Your request was $status.';
+    }
+  }
+
+  factory _LeaveRequestInfo.fromLeaveRequest(LeaveRequest req) {
+    final fromDt = DateTime.tryParse(req.fromDate);
+    final toDt = DateTime.tryParse(req.toDate);
+    final days = (fromDt != null && toDt != null)
+        ? toDt.difference(fromDt).inDays + 1
+        : 1;
+    final from = _formatDateString(req.fromDate);
+    final to = _formatDateString(req.toDate);
+    final datesLabel = '$from – $to · $days ${days == 1 ? 'Day' : 'Days'}';
+
+    return _LeaveRequestInfo(
+      type: req.type,
+      dates: datesLabel,
+      reason: req.reason,
+      documentName: req.documentName,
+      status: req.status,
+    );
+  }
 }
 
 class _LeavePage extends StatefulWidget {
@@ -1244,6 +1720,12 @@ class _LeavePageState extends State<_LeavePage> {
   final _reasonController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(widget.repository.fetchStaffLeaves());
+  }
+
+  @override
   void dispose() {
     _reasonController.dispose();
     super.dispose();
@@ -1261,7 +1743,9 @@ class _LeavePageState extends State<_LeavePage> {
   int _approvedDays(List<LeaveRequest> requests, int year, {int? month}) {
     int total = 0;
     for (final req in requests) {
-      if (req.staffId != widget.staffId) continue;
+      if (req.staffId.isNotEmpty &&
+          widget.staffId.isNotEmpty &&
+          req.staffId != widget.staffId) continue;
       if (req.status != LeaveStatus.approved) continue;
       final from = DateTime.tryParse(req.fromDate);
       final to = DateTime.tryParse(req.toDate);
@@ -1341,8 +1825,12 @@ class _LeavePageState extends State<_LeavePage> {
       }
       if (_reasonController.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Please enter a reason for leave.')));
+            const SnackBar(content: Text('Please enter a reason for leave.')));
+        return;
+      }
+      if (_reasonController.text.trim().length < 5) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Reason must be between 5 and 500 characters.')));
         return;
       }
       // Submit to repository
@@ -1355,7 +1843,20 @@ class _LeavePageState extends State<_LeavePage> {
         reason: _reasonController.text.trim(),
         type: _type,
         documentName: _type == 'Medical Leave' ? _medicalProofName : null,
+        documentBytes: _type == 'Medical Leave' ? _medicalProofBytes : null,
       );
+
+      // Cache uploaded doc bytes keyed by request id so detail sheet can show them
+      if (_type == 'Medical Leave' && _medicalProofBytes != null) {
+        final latestReq = widget.repository.leaveRequests.value
+                .where((r) => r.reason == _reasonController.text.trim())
+                .firstOrNull ??
+            widget.repository.leaveRequests.value.firstOrNull;
+        if (latestReq != null) {
+          _storedDocBytes[latestReq.id] = _medicalProofBytes!;
+        }
+      }
+
       // Also update local UI state for the home page card
       widget.onSubmit(_LeaveRequestInfo(
         type: _type,
@@ -1365,25 +1866,31 @@ class _LeavePageState extends State<_LeavePage> {
         documentName: _type == 'Medical Leave' ? _medicalProofName : null,
         documentPath: _type == 'Medical Leave' ? _medicalProofPath : null,
       ));
-      // Reset form
+      // Reset form ONLY on success
       setState(() {
         _type = 'Casual Leave';
         _startDate = DateTime.now();
         _endDate = DateTime.now();
+        _reasonController.clear();
         _medicalProofName = null;
         _medicalProofPath = null;
         _medicalProofBytes = null;
-        _reasonController.clear();
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text(
-                'Leave request submitted successfully.')),
+            content:
+                Text('Leave request submitted. Check Home for the update.')),
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+        String displayMsg;
+        if (e is ApiException) {
+          displayMsg = e.message;
+        } else {
+          displayMsg = e.toString().replaceFirst('Exception: ', '');
+        }
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(displayMsg)));
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
@@ -1409,12 +1916,18 @@ class _LeavePageState extends State<_LeavePage> {
     final fileName = _medicalProofName;
     final bytes = _medicalProofBytes;
     if (fileName == null || bytes == null) return;
+    final isPdf = fileName.toLowerCase().endsWith('.pdf') ||
+        (bytes.length >= 4 &&
+            bytes[0] == 0x25 &&
+            bytes[1] == 0x50 &&
+            bytes[2] == 0x44 &&
+            bytes[3] == 0x46);
     showDialog<void>(
       context: context,
       builder: (_) => _MedicalDocumentPreviewDialog(
         fileName: fileName,
         bytes: bytes,
-        isPdf: fileName.toLowerCase().endsWith('.pdf'),
+        isPdf: isPdf,
       ),
     );
   }
@@ -1466,11 +1979,14 @@ class _LeavePageState extends State<_LeavePage> {
       valueListenable: widget.repository.leaveRequests,
       builder: (context, allRequests, _) {
         final myRequests = allRequests
-            .where((r) => r.staffId == widget.staffId)
+            .where((r) =>
+                r.staffId == widget.staffId ||
+                r.staffId.isEmpty ||
+                widget.staffId.isEmpty)
             .toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-    return _ScrollPage(children: [
+        return _ScrollPage(children: [
           const SizedBox(height: 11),
           Row(children: [
             Expanded(
@@ -1500,8 +2016,8 @@ class _LeavePageState extends State<_LeavePage> {
                                         color: textColor))),
                             const SizedBox(width: 8),
                             Text('Fill all fields',
-                                style: TextStyle(
-                                    fontSize: 12, color: mutedColor))
+                                style:
+                                    TextStyle(fontSize: 12, color: mutedColor))
                           ],
                         ),
                         const SizedBox(height: 14),
@@ -1509,16 +2025,15 @@ class _LeavePageState extends State<_LeavePage> {
                         DropdownButtonFormField<String>(
                             value: _type,
                             isDense: true,
-                            style:
-                                TextStyle(fontSize: 13, color: textColor),
+                            style: TextStyle(fontSize: 13, color: textColor),
                             items: const [
                               'Casual Leave',
                               'Sick Leave',
                               'Earned Leave',
                               'Medical Leave',
                             ]
-                                .map((e) => DropdownMenuItem(
-                                    value: e, child: Text(e)))
+                                .map((e) =>
+                                    DropdownMenuItem(value: e, child: Text(e)))
                                 .toList(),
                             onChanged: (v) =>
                                 setState(() => _type = v ?? _type),
@@ -1534,39 +2049,33 @@ class _LeavePageState extends State<_LeavePage> {
                                 'Apply at least 3 working days in advance.',
                               'Earned Leave' =>
                                 'Apply at least 7 calendar days in advance.',
-                              'Sick Leave' =>
-                                'Submit as soon as possible.',
+                              'Sick Leave' => 'Submit as soon as possible.',
                               _ =>
                                 'Submit as soon as possible. Attach medical proof when available.',
                             },
-                            style:
-                                TextStyle(fontSize: 11, color: mutedColor)),
+                            style: TextStyle(fontSize: 11, color: mutedColor)),
                         if (_type == 'Medical Leave') ...[
                           const SizedBox(height: 12),
-                          _smallLabel('Medical Document',
-                              color: mutedColor),
+                          _smallLabel('Medical Document', color: mutedColor),
                           const SizedBox(height: 6),
                           if (_medicalProofName == null)
                             Text('Medical document not uploaded',
-                                style: TextStyle(
-                                    fontSize: 12, color: mutedColor)),
+                                style:
+                                    TextStyle(fontSize: 12, color: mutedColor)),
                           Wrap(
                               spacing: 8,
-                              crossAxisAlignment:
-                                  WrapCrossAlignment.center,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 OutlinedButton.icon(
                                     onPressed: _pickMedicalProof,
-                                    icon:
-                                        Icon(Icons.attach_file, size: 17),
+                                    icon: Icon(Icons.attach_file, size: 17),
                                     label: Text(_medicalProofName == null
                                         ? 'Attach Medical Proof'
                                         : 'Change Document')),
                                 if (_medicalProofName != null)
                                   OutlinedButton.icon(
                                       onPressed: _previewMedicalProof,
-                                      icon: Icon(
-                                          Icons.visibility_outlined,
+                                      icon: Icon(Icons.visibility_outlined,
                                           size: 17),
                                       label: Text('View Document')),
                                 if (_medicalProofName != null)
@@ -1577,8 +2086,7 @@ class _LeavePageState extends State<_LeavePage> {
                                             _medicalProofPath = null;
                                             _medicalProofBytes = null;
                                           }),
-                                      icon:
-                                          Icon(Icons.close, size: 18)),
+                                      icon: Icon(Icons.close, size: 18)),
                               ]),
                           if (_medicalProofName != null)
                             Padding(
@@ -1587,35 +2095,31 @@ class _LeavePageState extends State<_LeavePage> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                        fontSize: 12,
-                                        color: textColor))),
+                                        fontSize: 12, color: textColor))),
                           Text('PDF, JPG or PNG',
-                              style: TextStyle(
-                                  fontSize: 10, color: mutedColor)),
+                              style:
+                                  TextStyle(fontSize: 10, color: mutedColor)),
                         ],
                         const SizedBox(height: 12),
                         _smallLabel('Duration', color: mutedColor),
                         Row(children: [
                           Expanded(
                               child: GestureDetector(
-                                  onTap: () =>
-                                      _pickDate(start: true),
+                                  onTap: () => _pickDate(start: true),
                                   child: _dateBox(
                                       '📅  ${_formatDate(_startDate)}',
                                       textColor: textColor,
                                       borderColor: borderColor,
                                       backgroundColor: _fieldBg))),
                           Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 7),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 7),
                               child: Text('to',
                                   style: TextStyle(
-                                      fontSize: 12,
-                                      color: mutedColor))),
+                                      fontSize: 12, color: mutedColor))),
                           Expanded(
                               child: GestureDetector(
-                                  onTap: () =>
-                                      _pickDate(start: false),
+                                  onTap: () => _pickDate(start: false),
                                   child: _dateBox(
                                       '📅  ${_formatDate(_endDate)}',
                                       textColor: textColor,
@@ -1623,13 +2127,11 @@ class _LeavePageState extends State<_LeavePage> {
                                       backgroundColor: _fieldBg)))
                         ]),
                         const SizedBox(height: 12),
-                        _smallLabel('Reason for Leave',
-                            color: mutedColor),
+                        _smallLabel('Reason for Leave', color: mutedColor),
                         TextField(
                             controller: _reasonController,
                             maxLines: 3,
-                            style:
-                                TextStyle(fontSize: 13, color: textColor),
+                            style: TextStyle(fontSize: 13, color: textColor),
                             decoration: _fieldDecoration(
                                 hint:
                                     'Family function / personal reason for leave...',
@@ -1642,22 +2144,18 @@ class _LeavePageState extends State<_LeavePage> {
                             width: double.infinity,
                             height: 46,
                             child: FilledButton(
-                              onPressed:
-                                  _isSubmitting ? null : _submitRequest,
+                              onPressed: _isSubmitting ? null : _submitRequest,
                               style: FilledButton.styleFrom(
-                                  backgroundColor:
-                                      const Color(0xff172d50),
+                                  backgroundColor: const Color(0xff172d50),
                                   foregroundColor: Colors.white,
                                   shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(10))),
+                                      borderRadius: BorderRadius.circular(10))),
                               child: _isSubmitting
                                   ? const SizedBox(
                                       width: 18,
                                       height: 18,
                                       child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 2))
+                                          color: Colors.white, strokeWidth: 2))
                                   : const Text('Submit Request',
                                       style: TextStyle(
                                           color: Colors.white,
@@ -1681,8 +2179,7 @@ class _LeavePageState extends State<_LeavePage> {
                                         fontSize: 15,
                                         fontWeight: FontWeight.w700,
                                         color: textColor))),
-                            Text(
-                                '${myRequests.length} total',
+                            Text('${myRequests.length} total',
                                 style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w500,
@@ -1692,20 +2189,17 @@ class _LeavePageState extends State<_LeavePage> {
                         const SizedBox(height: 10),
                         if (myRequests.isEmpty)
                           Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 24),
+                              padding: const EdgeInsets.symmetric(vertical: 24),
                               child: Center(
                                   child: Column(
                                 children: [
-                                  Icon(
-                                      Icons.event_note_outlined,
+                                  Icon(Icons.event_note_outlined,
                                       size: 36,
                                       color: mutedColor.withOpacity(0.4)),
                                   const SizedBox(height: 8),
                                   Text('No leave requests submitted yet.',
                                       style: TextStyle(
-                                          color: mutedColor,
-                                          fontSize: 13)),
+                                          color: mutedColor, fontSize: 13)),
                                 ],
                               )))
                         else
@@ -1713,8 +2207,7 @@ class _LeavePageState extends State<_LeavePage> {
                             (req) => _LeaveRequestTile(
                               request: req,
                               formatDate: _formatDateStr,
-                              onTap: () => _openRequestDetail(
-                                  context, req),
+                              onTap: () => _openRequestDetail(context, req),
                             ),
                           ),
                       ]))),
@@ -1785,9 +2278,8 @@ class _LeaveRequestTile extends StatelessWidget {
                       TextSpan(text: '$datesLabel · '),
                       TextSpan(
                         text: daysText,
-                        style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: _ink),
+                        style:
+                            TextStyle(fontWeight: FontWeight.w700, color: _ink),
                       ),
                     ],
                   ),
@@ -1854,24 +2346,71 @@ class _LeaveDetailSheet extends StatelessWidget {
 
   Future<void> _viewDocument(BuildContext context) async {
     Uint8List? bytes = storedBytes;
-    if (bytes == null &&
-        request.documentUrl != null &&
-        request.documentUrl!.isNotEmpty) {
-      try {
-        final file = File(request.documentUrl!);
-        if (await file.exists()) {
-          bytes = await file.readAsBytes();
+
+    if (bytes == null) {
+      final docTarget = request.documentUrl ?? request.documentId;
+      if (docTarget != null && docTarget.isNotEmpty) {
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const Center(
+            child: Card(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 16),
+                    Text('Fetching document...',
+                        style: TextStyle(fontSize: 14)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+
+        try {
+          bytes = await repository.downloadDocument(docTarget);
+        } catch (e) {
+          debugPrint('Error downloading document: $e');
+        } finally {
+          if (context.mounted) {
+            Navigator.of(context, rootNavigator: true).pop();
+          }
         }
-      } catch (_) {}
+      }
     }
-    // Fallback demo bytes if no file on disk (for sample mock requests)
-    bytes ??= _generateDemoDocumentBytes(
-        request.documentName ?? 'medical_proof.pdf');
 
     if (!context.mounted) return;
 
+    if (bytes == null || bytes.isEmpty) {
+      if (request.id.startsWith('mock_') || request.id.length < 10) {
+        bytes = _generateDemoDocumentBytes(
+            request.documentName ?? 'medical_proof.pdf');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Failed to load document from server. Please try again.'),
+          ),
+        );
+        return;
+      }
+    }
+
     final fileName = request.documentName ?? 'Medical Document';
-    final isPdf = fileName.toLowerCase().endsWith('.pdf');
+    final isPdf = fileName.toLowerCase().endsWith('.pdf') ||
+        (bytes.length >= 4 &&
+            bytes[0] == 0x25 &&
+            bytes[1] == 0x50 &&
+            bytes[2] == 0x44 &&
+            bytes[3] == 0x46);
 
     showDialog<void>(
       context: context,
@@ -1887,8 +2426,7 @@ class _LeaveDetailSheet extends StatelessWidget {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Delete this leave request?',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         content: const Text(
@@ -1936,17 +2474,16 @@ class _LeaveDetailSheet extends StatelessWidget {
     final from = formatDate(request.fromDate);
     final to = formatDate(request.toDate);
     final days = _days;
-    final hasDocument = (request.documentName != null &&
-            request.documentName!.isNotEmpty) ||
-        (request.documentUrl != null && request.documentUrl!.isNotEmpty) ||
-        storedBytes != null;
+    final hasDocument =
+        (request.documentName != null && request.documentName!.isNotEmpty) ||
+            (request.documentUrl != null && request.documentUrl!.isNotEmpty) ||
+            storedBytes != null;
 
     return Container(
       margin: const EdgeInsets.only(top: 60),
       decoration: BoxDecoration(
         color: _bg,
-        borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1958,8 +2495,7 @@ class _LeaveDetailSheet extends StatelessWidget {
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                    color: _line,
-                    borderRadius: BorderRadius.circular(2))),
+                    color: _line, borderRadius: BorderRadius.circular(2))),
           ),
           // header
           Padding(
@@ -1971,9 +2507,7 @@ class _LeaveDetailSheet extends StatelessWidget {
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
                           color: _ink))),
-              _pill(
-                  request.status,
-                  _statusBackground(request.status),
+              _pill(request.status, _statusBackground(request.status),
                   _statusForeground(request.status)),
               const SizedBox(width: 6),
               IconButton(
@@ -1989,19 +2523,15 @@ class _LeaveDetailSheet extends StatelessWidget {
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _detailRow(Icons.event_note_outlined, 'Leave Type',
-                        request.type),
+                    _detailRow(
+                        Icons.event_note_outlined, 'Leave Type', request.type),
                     _detailRow(
                         Icons.calendar_today_outlined, 'From Date', from),
                     _detailRow(Icons.event_outlined, 'To Date', to),
-                    _detailRow(
-                        Icons.access_time_outlined,
-                        'Number of Days',
+                    _detailRow(Icons.access_time_outlined, 'Number of Days',
                         '$days ${days == 1 ? 'day' : 'days'}'),
-                    _detailRow(
-                        Icons.notes_outlined, 'Reason', request.reason),
-                    _detailRow(
-                        Icons.info_outline, 'Status', request.status),
+                    _detailRow(Icons.notes_outlined, 'Reason', request.reason),
+                    _detailRow(Icons.info_outline, 'Status', request.status),
                     if (hasDocument) ...[
                       const SizedBox(height: 6),
                       Divider(color: _line),
@@ -2020,8 +2550,7 @@ class _LeaveDetailSheet extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: const Color(0xfff0f5ff),
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                                color: const Color(0xffd0e0ff)),
+                            border: Border.all(color: const Color(0xffd0e0ff)),
                           ),
                           child: Row(children: [
                             Container(
@@ -2036,12 +2565,10 @@ class _LeaveDetailSheet extends StatelessWidget {
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    request.documentName ??
-                                        'Medical Document',
+                                    request.documentName ?? 'Medical Document',
                                     style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -2096,45 +2623,116 @@ class _LeaveDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _detailRow(IconData icon, String label, String value) =>
-      Padding(
+  Widget _detailRow(IconData icon, String label, String value) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 17, color: _blue),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                    Text(label,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: _muted,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text(value,
-                        style: TextStyle(
-                            fontSize: 13,
-                            color: _ink,
-                            fontWeight: FontWeight.w500)),
-                  ])),
-            ]),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, size: 17, color: _blue),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(label,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: _muted,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(value,
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: _ink,
+                        fontWeight: FontWeight.w500)),
+              ])),
+        ]),
       );
 }
 
 // ── Medical Document Preview Dialog ──────────────────────────────────────────
 
 Uint8List _generateDemoDocumentBytes(String fileName) {
+  if (fileName.toLowerCase().endsWith('.pdf')) {
+    const pdfString = '%PDF-1.4\n'
+        '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n'
+        '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n'
+        '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n'
+        '4 0 obj\n<< /Length 73 >>\nstream\n'
+        'BT\n/F1 24 Tf\n100 700 Td\n(Medical Certificate Proof) Tj\nET\n'
+        'endstream\nendobj\n'
+        '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n'
+        'xref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000244 00000 n \n0000000368 00000 n \n'
+        'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n447\n%%EOF\n';
+    return Uint8List.fromList(utf8.encode(pdfString));
+  }
   // A simple 1x1 PNG image byte sequence fallback
   return Uint8List.fromList([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00, 0x64,
-    0x08, 0x02, 0x00, 0x00, 0x00, 0xff, 0x80, 0x02, 0x03, 0x00, 0x00, 0x00,
-    0x0c, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0x0f, 0x00, 0x01,
-    0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x49,
-    0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+    0x00,
+    0x00,
+    0x00,
+    0x0d,
+    0x49,
+    0x48,
+    0x44,
+    0x52,
+    0x00,
+    0x00,
+    0x00,
+    0x64,
+    0x00,
+    0x00,
+    0x00,
+    0x64,
+    0x08,
+    0x02,
+    0x00,
+    0x00,
+    0x00,
+    0xff,
+    0x80,
+    0x02,
+    0x03,
+    0x00,
+    0x00,
+    0x00,
+    0x0c,
+    0x49,
+    0x44,
+    0x41,
+    0x54,
+    0x78,
+    0x9c,
+    0x63,
+    0xf8,
+    0x0f,
+    0x00,
+    0x01,
+    0x01,
+    0x01,
+    0x00,
+    0x18,
+    0xdd,
+    0x8d,
+    0xb0,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x49,
+    0x45,
+    0x4e,
+    0x44,
+    0xae,
+    0x42,
+    0x60,
+    0x82
   ]);
 }
 
@@ -2164,8 +2762,8 @@ class _MedicalDocumentPreviewDialogState
     super.initState();
     if (widget.isPdf) {
       try {
-        _pdfController = PdfControllerPinch(
-            document: PdfDocument.openData(widget.bytes));
+        _pdfController =
+            PdfControllerPinch(document: PdfDocument.openData(widget.bytes));
       } catch (e) {
         _pdfError = true;
       }
@@ -2181,8 +2779,7 @@ class _MedicalDocumentPreviewDialogState
   @override
   Widget build(BuildContext context) => Dialog(
         insetPadding: const EdgeInsets.all(16),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: SizedBox(
           width: 600,
           height: MediaQuery.sizeOf(context).height * 0.82,
@@ -2205,6 +2802,18 @@ class _MedicalDocumentPreviewDialogState
                             fontWeight: FontWeight.w600,
                             color: _ink))),
                 IconButton(
+                    tooltip: 'Download document',
+                    onPressed: () {
+                      downloadBytes(widget.bytes, widget.fileName);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Downloading ${widget.fileName}...'),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                    icon: Icon(Icons.download_rounded, color: _ink)),
+                IconButton(
                     tooltip: 'Close preview',
                     onPressed: () => Navigator.of(context).pop(),
                     icon: Icon(Icons.close, color: _ink)),
@@ -2216,6 +2825,49 @@ class _MedicalDocumentPreviewDialogState
                   ? PdfViewPinch(
                       controller: _pdfController!,
                       backgroundDecoration: BoxDecoration(color: _bg),
+                      builders: PdfViewPinchBuilders<DefaultBuilderOptions>(
+                        options: const DefaultBuilderOptions(),
+                        documentLoaderBuilder: (_) => const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                        pageLoaderBuilder: (_) => const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                        errorBuilder: (context, error) => Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.description_outlined,
+                                    size: 48, color: _blue),
+                                const SizedBox(height: 12),
+                                Text(
+                                  widget.fileName,
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: _ink),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Preview unavailable. You can download the file to view it.',
+                                  style: TextStyle(fontSize: 12, color: _muted),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 16),
+                                FilledButton.icon(
+                                  onPressed: () => downloadBytes(
+                                      widget.bytes, widget.fileName),
+                                  icon: const Icon(Icons.download_rounded,
+                                      size: 16),
+                                  label: const Text('Download Document'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     )
                   : InteractiveViewer(
                       child: Center(
@@ -2241,8 +2893,15 @@ class _MedicalDocumentPreviewDialogState
                                 const SizedBox(height: 4),
                                 Text(
                                   'Uploaded Medical Document Proof',
-                                  style: TextStyle(
-                                      fontSize: 12, color: _muted),
+                                  style: TextStyle(fontSize: 12, color: _muted),
+                                ),
+                                const SizedBox(height: 16),
+                                FilledButton.icon(
+                                  onPressed: () => downloadBytes(
+                                      widget.bytes, widget.fileName),
+                                  icon: const Icon(Icons.download_rounded,
+                                      size: 16),
+                                  label: const Text('Download File'),
                                 ),
                               ],
                             ),
@@ -2291,7 +2950,8 @@ class _ChatPageState extends State<_ChatPage> {
     const _ChatMessage(
       initials: 'AM',
       name: 'Anshi M.',
-      text: 'Good morning team 👋 Hope everyone has a smooth and productive Wednesday.',
+      text:
+          'Good morning team 👋 Hope everyone has a smooth and productive Wednesday.',
       time: '09:12 AM',
     ),
     const _ChatMessage(
@@ -2303,19 +2963,22 @@ class _ChatPageState extends State<_ChatPage> {
     const _ChatMessage(
       initials: 'PS',
       name: 'Priya S.',
-      text: 'Wishing you all a great Wednesday. Don’t forget to sync your updates before EOD.',
+      text:
+          'Wishing you all a great Wednesday. Don’t forget to sync your updates before EOD.',
       time: '09:26 AM',
     ),
     const _ChatMessage(
       initials: 'AM',
       name: 'Anshi M.',
-      text: 'Friendly reminder: Please submit your daily work updates before 6 PM today. ✅',
+      text:
+          'Friendly reminder: Please submit your daily work updates before 6 PM today. ✅',
       time: '10:02 AM',
     ),
     const _ChatMessage(
       initials: 'HR',
       name: 'HR Team',
-      text: 'Office will start at 9:30 AM tomorrow for scheduled infrastructure maintenance.',
+      text:
+          'Office will start at 9:30 AM tomorrow for scheduled infrastructure maintenance.',
       time: '11:15 AM',
     ),
     const _ChatMessage(
@@ -2377,17 +3040,16 @@ class _ChatPageState extends State<_ChatPage> {
             constraints: const BoxConstraints(maxWidth: 270),
             decoration: BoxDecoration(
                 color: _blue, borderRadius: BorderRadius.circular(12)),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(message.text,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 12, height: 1.4)),
-                  const SizedBox(height: 4),
-                  Text('${message.time}  ${message.isRead ? '✓✓' : '✓'}',
-                      style: const TextStyle(
-                          color: Color(0xffdce8ff), fontSize: 10))
-                ])),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text(message.text,
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 12, height: 1.4)),
+              const SizedBox(height: 4),
+              Text('${message.time}  ${message.isRead ? '✓✓' : '✓'}',
+                  style:
+                      const TextStyle(color: Color(0xffdce8ff), fontSize: 10))
+            ])),
       );
 
   @override
@@ -2432,7 +3094,7 @@ class _ChatPageState extends State<_ChatPage> {
                         borderRadius: BorderRadius.circular(12))))),
       Expanded(
           child: ListView(
-            controller: _messagesScrollController,
+              controller: _messagesScrollController,
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               children: [
             if (visibleMessages.isNotEmpty)
@@ -2522,8 +3184,7 @@ class _SettingsPage extends StatelessWidget {
         context: context,
         builder: (context) => AlertDialog(
               title: Text('Log out?'),
-              content:
-                  Text('You will need to sign in again to use StaffHub.'),
+              content: Text('You will need to sign in again to use StaffHub.'),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(context, false),
@@ -2581,8 +3242,7 @@ class _SettingsPage extends StatelessWidget {
               onTap: onOpenNotifications),
         ]),
         _group('App', [
-          _SettingRow(Icons.palette_outlined, 'Appearance',
-              'Light, dark',
+          _SettingRow(Icons.palette_outlined, 'Appearance', 'Light, dark',
               onTap: onOpenAppearance)
         ]),
         _group('Legal', [
@@ -2597,8 +3257,8 @@ class _SettingsPage extends StatelessWidget {
           _SettingRow(
               Icons.help_outline, 'Help & Support', 'Get help with StaffHub',
               onTap: onOpenSupport),
-          _SettingRow(Icons.info_outline, 'About',
-              'App information and version',
+          _SettingRow(
+              Icons.info_outline, 'About', 'App information and version',
               onTap: onOpenAbout),
         ]),
         Padding(
@@ -2668,6 +3328,157 @@ class _SettingsDetailPage extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: _muted)),
           const SizedBox(height: 10),
         ])),
+      ]);
+}
+
+class _AboutPage extends StatelessWidget {
+  const _AboutPage({
+    required this.onOpenTerms,
+    required this.onOpenPrivacyPolicy,
+    required this.onOpenLicenses,
+  });
+
+  final VoidCallback onOpenTerms;
+  final VoidCallback onOpenPrivacyPolicy;
+  final VoidCallback onOpenLicenses;
+
+  Widget _group(String label, List<Widget> rows) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(label.toUpperCase(),
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
+                    color: _muted))),
+        _ProfileCard(
+            child: Column(children: [
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: _line),
+            rows[i]
+          ]
+        ])),
+        const SizedBox(height: 18),
+      ]);
+
+  @override
+  Widget build(BuildContext context) => _ScrollPage(children: [
+        const SizedBox(height: 14),
+        _ProfileCard(
+          child: Column(
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xff2864e8), Color(0xff5b8bf7)],
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x332864e8),
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.business_center_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'LY Staff Management',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                  color: _ink,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _isDark
+                      ? const Color(0xff1d2b40)
+                      : const Color(0xffeaf0ff),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'Version 1.0.0',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: _blue,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'A complete workforce management platform designed to manage staff attendance, breaks, leave, tasks and employee activities efficiently.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.55,
+                  color: _muted,
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        _group('Developer', const [
+          _SettingRow(
+            Icons.business_outlined,
+            'Developed By',
+            'LY Softwares',
+            trailing: SizedBox.shrink(),
+          ),
+        ]),
+        _group('Legal', [
+          _SettingRow(
+            Icons.description_outlined,
+            'Terms & Conditions',
+            'Terms for using LY Staff Management',
+            onTap: onOpenTerms,
+          ),
+          _SettingRow(
+            Icons.privacy_tip_outlined,
+            'Privacy Policy',
+            'How your information is handled',
+            onTap: onOpenPrivacyPolicy,
+          ),
+          _SettingRow(
+            Icons.policy_outlined,
+            'Open Source Licenses',
+            'Third-party software libraries and licenses',
+            onTap: onOpenLicenses,
+          ),
+        ]),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 24),
+            child: Text(
+              '© 2026 LY Softwares. All rights reserved.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: _muted,
+              ),
+            ),
+          ),
+        ),
       ]);
 }
 
@@ -2844,11 +3655,13 @@ class _ProfilePage extends StatefulWidget {
   const _ProfilePage(
       {required this.onLogout,
       required this.staff,
+      required this.repository,
       required this.department,
       required this.workMode,
       required this.workLocation});
   final VoidCallback onLogout;
   final Staff staff;
+  final HRRepository repository;
   final String department;
   final String workMode;
   final String? workLocation;
@@ -2857,10 +3670,89 @@ class _ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<_ProfilePage> {
+  late Staff _staff;
+  bool _isLoading = false;
+  bool _isSaving = false;
   bool _notificationsEnabled = true;
 
   @override
+  void initState() {
+    super.initState();
+    _staff = widget.staff;
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() => _isLoading = true);
+    try {
+      final profile = await widget.repository.fetchProfile();
+      if (mounted) setState(() => _staff = profile);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _editProfile() async {
+    final phoneController = TextEditingController(text: _staff.phoneNumber);
+    final addressController = TextEditingController(text: _staff.address);
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Profile'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: phoneController,
+              decoration: const InputDecoration(labelText: 'Phone Number'),
+            ),
+            TextField(
+              controller: addressController,
+              decoration: const InputDecoration(labelText: 'Address'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      setState(() => _isSaving = true);
+      try {
+        await widget.repository.updateProfile(
+          phone: phoneController.text,
+          address: addressController.text,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Profile updated successfully')),
+          );
+          _loadProfile();
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to update profile: $e')),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) => _ScrollPage(children: [
+        if (_isLoading || _isSaving) const LinearProgressIndicator(),
         const SizedBox(height: 12),
         Center(
             child: Column(children: [
@@ -2881,33 +3773,43 @@ class _ProfilePageState extends State<_ProfilePage> {
                   ]),
               child: Center(
                   child: Text(
-                      widget.staff.name.isEmpty
+                      _staff.name.isEmpty
                           ? 'S'
-                          : widget.staff.name.characters.first.toUpperCase(),
+                          : _staff.name.characters.first.toUpperCase(),
                       style: TextStyle(
                           color: Colors.white,
                           fontSize: 24,
                           fontWeight: FontWeight.w700)))),
           const SizedBox(height: 12),
-          Text(widget.staff.name,
+          Text(_staff.name,
               style: TextStyle(
                   fontWeight: FontWeight.w700, fontSize: 18, color: _ink)),
           const SizedBox(height: 5),
-          _pill(widget.department.toUpperCase(), const Color(0xffeaf0ff), _blue)
+          _pill(_staff.department.toUpperCase(), const Color(0xffeaf0ff), _blue)
         ])),
         const SizedBox(height: 20),
         _Card(
             child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Row(children: [
-                  _profileStat('Employee ID', 'EMP-2024'),
+                  _profileStat('Employee ID',
+                      _staff.id.isNotEmpty ? _staff.id : 'EMP-2024'),
                   _profileStat('Joined', 'Mar 2024'),
                   _profileStat('Status', 'Active')
                 ]))),
         const SizedBox(height: 22),
-        Text('Personal Information',
-            style: TextStyle(
-                fontWeight: FontWeight.w700, fontSize: 15, color: _ink)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Personal Information',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 15, color: _ink)),
+            IconButton(
+              icon: const Icon(Icons.edit, size: 20),
+              onPressed: _isSaving ? null : _editProfile,
+            ),
+          ],
+        ),
         const SizedBox(height: 10),
         _ProfileCard(
             child: Padding(
@@ -2915,12 +3817,13 @@ class _ProfilePageState extends State<_ProfilePage> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _InfoRow(
-                          Icons.mail_outline, 'Work Email', widget.staff.email),
+                      _InfoRow(Icons.mail_outline, 'Work Email', _staff.email),
                       _InfoRow(Icons.call_outlined, 'Phone Number',
-                          widget.staff.phoneNumber),
+                          _staff.phoneNumber),
+                      _InfoRow(Icons.location_city_outlined, 'Address',
+                          _staff.address),
                       _InfoRow(Icons.apartment_outlined, 'Department',
-                          widget.department),
+                          _staff.department),
                       _InfoRow(
                           Icons.work_outline, 'Work Mode', widget.workMode),
                       if (widget.workMode == 'Work From Home' &&
@@ -2954,22 +3857,22 @@ class _ProfilePageState extends State<_ProfilePage> {
                       const _SettingRow(Icons.help_outline,
                           'Support & Helpdesk', 'Raise a support ticket')
                     ]))),
-        // const SizedBox(height: 22),
-        // SizedBox(
-        //     width: double.infinity,
-        //     child: OutlinedButton.icon(
-        //         onPressed: widget.onLogout,
-        //         icon: Icon(Icons.logout, size: 16),
-        //         label: Text('Log Out',
-        //             style:
-        //                 TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-        //         style: OutlinedButton.styleFrom(
-        //             foregroundColor: const Color(0xffd84747),
-        //             backgroundColor: const Color(0xffffeeee),
-        //             minimumSize: const Size(0, 44),
-        //             side: BorderSide.none,
-        //             shape: RoundedRectangleBorder(
-        //                 borderRadius: BorderRadius.circular(10))))),
+        const SizedBox(height: 22),
+        SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+                onPressed: widget.onLogout,
+                icon: const Icon(Icons.logout, size: 16),
+                label: const Text('Log Out',
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xffd84747),
+                    backgroundColor: const Color(0xffffeeee),
+                    minimumSize: const Size(0, 44),
+                    side: BorderSide.none,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10))))),
         Center(
             child: Padding(
                 padding: EdgeInsets.all(7),
@@ -3069,8 +3972,7 @@ Widget _timeline(IconData icon, String title, String subtitle, String time,
     ]);
 Widget _historyRow(String date, String detail, String status) => Container(
     padding: const EdgeInsets.symmetric(vertical: 7),
-    decoration:
-        BoxDecoration(border: Border(bottom: BorderSide(color: _line))),
+    decoration: BoxDecoration(border: Border(bottom: BorderSide(color: _line))),
     child: Row(children: [
       Icon(Icons.calendar_today_outlined, size: 13, color: _blue),
       const SizedBox(width: 7),
@@ -3091,81 +3993,49 @@ Widget _historyRow(String date, String detail, String status) => Container(
       const SizedBox(width: 5),
       Icon(Icons.chevron_right, size: 14, color: _muted)
     ]));
-Widget _balance(String label, String number) => Expanded(
-    child: Container(
-        margin: const EdgeInsets.only(right: 5),
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        decoration: BoxDecoration(
-            color: const Color(0xfff7f9fc),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _line)),
-        child: Column(children: [
-          Text(label, style: TextStyle(fontSize: 10, color: _muted)),
-          Text(number,
-              style: TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w700, color: _ink))
-        ])));
 Widget _smallLabel(String text, {Color? color}) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Text(text,
         style: TextStyle(
-            fontSize: 12, color: color ?? _muted, fontWeight: FontWeight.w600)));
+            fontSize: 12,
+            color: color ?? _muted,
+            fontWeight: FontWeight.w600)));
 InputDecoration _fieldDecoration({
   String? hint,
   Color? textColor,
   Color? hintColor,
   Color? borderColor,
   Color? fillColor,
-}) => InputDecoration(
-    hintText: hint,
-  hintStyle: TextStyle(fontSize: 12, color: hintColor ?? _muted),
-    isDense: true,
-  filled: fillColor != null,
-  fillColor: fillColor,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-    border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-    borderSide: BorderSide(color: borderColor ?? _line)),
-    enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-    borderSide: BorderSide(color: borderColor ?? _line)));
+}) =>
+    InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(fontSize: 12, color: hintColor ?? _muted),
+        isDense: true,
+        filled: fillColor != null,
+        fillColor: fillColor,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: borderColor ?? _line)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: borderColor ?? _line)));
 Widget _dateBox(
   String text, {
   Color? textColor,
   Color? borderColor,
   Color? backgroundColor,
-}) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-    decoration: BoxDecoration(
-    color: backgroundColor,
-        borderRadius: BorderRadius.circular(10),
-    border: Border.all(color: borderColor ?? _line)),
-  child: Text(text, style: TextStyle(fontSize: 12, color: textColor ?? _ink)));
-Widget _request(
-    String type, String dates, String state, String reason,
-    {Color? textColor,
-    Color? mutedColor,
-    Color? borderColor}) =>
+}) =>
     Container(
-        margin: const EdgeInsets.only(top: 7),
-        padding: const EdgeInsets.only(top: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
         decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: borderColor ?? _line))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(
-                child: Text(type,
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: textColor ?? _ink))),
-            _pill(state, _statusBackground(state), _statusForeground(state))
-          ]),
-          const SizedBox(height: 2),
-          Text(dates, style: TextStyle(fontSize: 10, color: mutedColor ?? _muted)),
-          const SizedBox(height: 2),
-          Text(reason, style: TextStyle(fontSize: 10, color: mutedColor ?? _muted))
-        ]));
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: borderColor ?? _line)),
+        child: Text(text,
+            style: TextStyle(fontSize: 12, color: textColor ?? _ink)));
+
 Color _statusBackground(String status) {
   switch (status.toLowerCase()) {
     case 'approved':
@@ -3195,8 +4065,8 @@ Widget _profileStat(String title, String value) => Expanded(
       Text(title, style: TextStyle(fontSize: 11, color: _muted)),
       const SizedBox(height: 5),
       Text(value,
-          style: TextStyle(
-              fontSize: 13, color: _ink, fontWeight: FontWeight.w700))
+          style:
+              TextStyle(fontSize: 13, color: _ink, fontWeight: FontWeight.w700))
     ]));
 
 class _InfoRow extends StatelessWidget {
@@ -3249,8 +4119,7 @@ class _SettingRow extends StatelessWidget {
                     Text(subtitle,
                         style: TextStyle(fontSize: 11, color: _muted))
                   ])),
-              trailing ??
-                  Icon(Icons.chevron_right, size: 18, color: _muted)
+              trailing ?? Icon(Icons.chevron_right, size: 18, color: _muted)
             ])),
       );
 }
@@ -3286,8 +4155,7 @@ Widget _message(String initials, String name, String text, String time) =>
                                       fontWeight: FontWeight.w700,
                                       color: _ink))),
                           Text(time,
-                              style:
-                                  TextStyle(fontSize: 7, color: _muted))
+                              style: TextStyle(fontSize: 7, color: _muted))
                         ]),
                         const SizedBox(height: 4),
                         Text(text,
