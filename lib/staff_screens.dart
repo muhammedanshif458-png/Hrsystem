@@ -152,13 +152,29 @@ class _StaffHubShellState extends State<StaffHubShell> {
     try {
       if (attendance == null) {
         await widget.repository.checkIn(widget.staff.id);
-      } else if (attendance.checkOutTime == null) {
-        if (attendance.isOnBreak) {
-          await widget.repository.checkOut(attendance.id);
-        } else {
-          await widget.repository.checkOut(attendance.id);
-        }
+        return;
       }
+
+      if (attendance.checkOutTime != null) return;
+
+      final shouldCheckOut = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Are you sure you want to check out?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('NO'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('YES'),
+            ),
+          ],
+        ),
+      );
+      if (shouldCheckOut != true || !mounted) return;
+      await widget.repository.checkOut(attendance.id);
     } catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))));
     }
