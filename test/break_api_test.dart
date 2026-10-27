@@ -21,9 +21,7 @@ void main() {
 
   for (final department in [Department.tech, Department.telecalling]) {
     for (final type in AttendanceBreakSchedule.types) {
-      test(
-          '$department can start $type before its scheduled time and refresh it',
-          () async {
+      test('$department can start $type early and refresh it', () async {
         final adapter = _BreakAdapter();
         final repo = _repository(adapter, department);
         final scheduleIndex = AttendanceBreakSchedule.types.indexOf(type);
@@ -32,7 +30,7 @@ void main() {
             DateTime(2026, 10, 26),
             scheduleIndex,
           ),
-          isFalse,
+          isTrue,
         );
         await repo.fetchStaffAttendance();
         await repo.toggleBreak('att-1', breakType: type);
@@ -76,29 +74,48 @@ void main() {
     expect(adapter.requests.where((r) => r.method == 'POST'), isEmpty);
   });
 
+  test('tea breaks are independently consumed from server attendance data',
+      () async {
+    final adapter = _BreakAdapter();
+    final repo = _repository(adapter, Department.tech);
+    await repo.fetchStaffAttendance();
+    for (final type in ['tea_break_1', 'tea_break_2']) {
+      await repo.toggleBreak('att-1', breakType: type);
+      await repo.toggleBreak('att-1');
+    }
+    expect(adapter.completedTypes, {'tea_break_1', 'tea_break_2'});
+    final refreshed = _repository(adapter, Department.tech);
+    await refreshed.fetchStaffAttendance();
+    expect(refreshed.attendanceList.value.single.breaks.map((b) => b.breakType),
+        containsAll(['tea_break_1', 'tea_break_2']));
+    await expectLater(refreshed.toggleBreak('att-1', breakType: 'tea_break_1'),
+        throwsException);
+    await refreshed.toggleBreak('att-1', breakType: 'lunch');
+  });
+
   test('breaks require check-in and are blocked after check-out', () async {
     final beforeCheckIn = _BreakAdapter()..checkedIn = false;
     final repo = _repository(beforeCheckIn, Department.tech);
     await repo.fetchStaffAttendance();
     await expectLater(
-        repo.toggleBreak('att-1', breakType: 'morning'), throwsException);
+        repo.toggleBreak('att-1', breakType: 'tea_break_1'), throwsException);
     expect(beforeCheckIn.requests.where((r) => r.method == 'POST'), isEmpty);
 
     final afterCheckOut = _BreakAdapter()..checkedOut = true;
     final checkedOutRepo = _repository(afterCheckOut, Department.tech);
     await checkedOutRepo.fetchStaffAttendance();
-    await expectLater(checkedOutRepo.toggleBreak('att-1', breakType: 'morning'),
+    await expectLater(
+        checkedOutRepo.toggleBreak('att-1', breakType: 'tea_break_1'),
         throwsException);
     expect(afterCheckOut.requests.where((r) => r.method == 'POST'), isEmpty);
   });
 
-  test('server schedule restriction and authentication failures are surfaced',
-      () async {
+  test('API and authentication failures are surfaced', () async {
     final restricted = _BreakAdapter(startStatus: 400);
     final restrictedRepo = _repository(restricted, Department.telecalling);
     await restrictedRepo.fetchStaffAttendance();
     await expectLater(
-        restrictedRepo.toggleBreak('att-1', breakType: 'afternoon'),
+        restrictedRepo.toggleBreak('att-1', breakType: 'tea_break_2'),
         throwsA(isA<ApiException>().having(
             (e) => e.message, 'message', 'Break is not available yet')));
 
@@ -106,7 +123,7 @@ void main() {
     final unauthorizedRepo = _repository(unauthorized, Department.tech);
     await unauthorizedRepo.fetchStaffAttendance();
     await expectLater(
-        unauthorizedRepo.toggleBreak('att-1', breakType: 'morning'),
+        unauthorizedRepo.toggleBreak('att-1', breakType: 'tea_break_1'),
         throwsA(isA<ApiException>()));
   });
 
@@ -115,10 +132,34 @@ void main() {
     final adapter = _BreakAdapter(startStatus: 500);
     final repo = _repository(adapter, Department.tech);
     await repo.fetchStaffAttendance();
-    await expectLater(repo.toggleBreak('att-1', breakType: 'morning'),
+    await expectLater(repo.toggleBreak('att-1', breakType: 'tea_break_1'),
         throwsA(isA<ApiException>()));
     expect(repo.attendanceList.value.single.breaks, isEmpty);
     expect(adapter.requests.where((r) => r.method == 'GET'), hasLength(1));
+  });
+
+  test('failed end request preserves active server-backed break state',
+      () async {
+    final adapter = _BreakAdapter()..activeType = 'lunch';
+    adapter.endStatus = 500;
+    final repo = _repository(adapter, Department.telecalling);
+    await repo.fetchStaffAttendance();
+    await expectLater(repo.toggleBreak('att-1'), throwsA(isA<ApiException>()));
+    expect(repo.attendanceList.value.single.breaks.single.isActive, isTrue);
+    expect(adapter.activeType, 'lunch');
+  });
+
+  test('lunch completion remains consumed after attendance refresh', () async {
+    final adapter = _BreakAdapter()..activeType = 'lunch';
+    final repo = _repository(adapter, Department.tech);
+    await repo.fetchStaffAttendance();
+    await repo.toggleBreak('att-1');
+    final reloaded = _repository(adapter, Department.tech);
+    await reloaded.fetchStaffAttendance();
+    expect(
+        reloaded.attendanceList.value.single.breaks.single.isCompleted, isTrue);
+    await expectLater(
+        reloaded.toggleBreak('att-1', breakType: 'lunch'), throwsException);
   });
 }
 
@@ -141,7 +182,8 @@ class _BreakAdapter implements HttpClientAdapter {
   final int startStatus;
   final requests = <_Request>[];
   String? activeType;
-  String? completedType;
+  final Set<String> completedTypes = {};
+  int endStatus = 200;
   bool checkedIn = true;
   bool checkedOut = false;
   final DateTime _now = DateTime.now();
@@ -163,25 +205,32 @@ class _BreakAdapter implements HttpClientAdapter {
       return _response(200, {'success': true});
     }
     if (options.path.endsWith('/breaks/end')) {
-      completedType = activeType;
+      if (endStatus != 200)
+        return _response(
+            endStatus, {'success': false, 'message': 'end failed'});
+      if (activeType != null) completedTypes.add(activeType!);
       activeType = null;
       return _response(200, {'success': true});
     }
-    final type = activeType ?? completedType;
-    final breaks = type == null
-        ? <Map<String, dynamic>>[]
-        : [
-            {
-              'id': 'break-1',
-              'attendanceId': 'att-1',
-              'breakType': type,
-              'startTime': _now.toIso8601String(),
-              'endTime': activeType == null
-                  ? _now.add(const Duration(minutes: 1)).toIso8601String()
-                  : null,
-              'durationSeconds': activeType == null ? 60 : 0
-            }
-          ];
+    final breaks = <Map<String, dynamic>>[
+      ...completedTypes.map((type) => {
+            'id': 'break-1',
+            'attendanceId': 'att-1',
+            'breakType': type,
+            'startTime': _now.toIso8601String(),
+            'endTime': _now.add(const Duration(minutes: 1)).toIso8601String(),
+            'durationSeconds': 60
+          }),
+      if (activeType != null)
+        {
+          'id': 'break-active',
+          'attendanceId': 'att-1',
+          'breakType': activeType,
+          'startTime': _now.toIso8601String(),
+          'endTime': null,
+          'durationSeconds': 0,
+        },
+    ];
     return _response(200, {
       'success': true,
       'data': [

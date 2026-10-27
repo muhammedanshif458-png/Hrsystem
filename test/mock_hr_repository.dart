@@ -142,33 +142,6 @@ class MockHRRepository implements HRRepository {
   }
 
   @override
-  Future<void> endExpiredBreak(String attendanceId) async {
-    final idx = attendanceList.value.indexWhere((a) => a.id == attendanceId);
-    if (idx != -1) {
-      final a = attendanceList.value[idx];
-      if (a.isOnBreak) {
-        final b = a.breaks.last;
-        final updatedBreaks = List<AttendanceBreak>.from(a.breaks);
-        const duration = 15 * 60;
-        updatedBreaks.last = AttendanceBreak(
-          id: b.id,
-          attendanceId: b.attendanceId,
-          breakType: b.breakType,
-          startTime: b.startTime,
-          endTime: b.startTime.add(const Duration(minutes: 15)),
-          durationSeconds: duration,
-        );
-        attendanceList.value[idx] = a.copyWith(
-          breaks: updatedBreaks,
-          breakStartedAt: null,
-          totalBreakSeconds: a.totalBreakSeconds + duration,
-        );
-      }
-      attendanceList.value = List.from(attendanceList.value);
-    }
-  }
-
-  @override
   Future<void> requestLeave({
     required String staffId,
     required String fromDate,

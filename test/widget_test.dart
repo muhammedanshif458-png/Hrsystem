@@ -16,60 +16,26 @@ import 'package:hr_core/staff_screens.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  test('break schedule is informational and break allowances remain configured', () async {
-    final day = DateTime(2026, 9, 24);
-    expect(AttendanceBreakSchedule.canStart(DateTime(2026, 9, 24, 11, 29), 0), isFalse);
-    expect(AttendanceBreakSchedule.canStart(DateTime(2026, 9, 24, 11, 30), 0), isTrue);
-    expect(AttendanceBreakSchedule.startsAt(day, 1), DateTime(2026, 9, 24, 13, 30));
-    expect(AttendanceBreakSchedule.startsAt(day, 2), DateTime(2026, 9, 24, 16));
-
-    SharedPreferences.setMockInitialValues({});
-    final repository = MockHRRepository();
-    final attendance = await repository.checkIn('staff_break_test');
-    await repository.toggleBreak(attendance.id, breakType: 'afternoon');
-    expect(repository.attendanceList.value.single.breaks.single.breakType, 'afternoon');
-
-    final startedAt = DateTime.now().subtract(const Duration(minutes: 20));
-    final expiredBreak = AttendanceBreak(
-      id: 'expired_break',
-      attendanceId: attendance.id,
-      breakType: 'morning',
-      startTime: startedAt,
-    );
-    final updated = attendance.copyWith(
-      breaks: [expiredBreak],
-      breakStartedAt: startedAt,
-    );
-    repository.attendanceList.value = [updated];
-
-    await repository.endExpiredBreak(updated.id);
-
-    final endedBreak = repository.attendanceList.value.single.breaks.single;
-    expect(endedBreak.isActive, isFalse);
-    expect(endedBreak.durationSeconds, 15 * 60);
-    expect(endedBreak.endTime, startedAt.add(const Duration(minutes: 15)));
-    expect(repository.attendanceList.value.single.totalBreakSeconds, 15 * 60);
+  test('break catalog has three independent types and informational durations',
+      () {
     expect(
-      AttendanceBreak(
-        id: 'lunch_break',
-        attendanceId: attendance.id,
-        breakType: 'lunch',
-        startTime: startedAt,
-      ).durationAt(startedAt.add(const Duration(minutes: 45))),
-      30 * 60,
-    );
+        AttendanceBreakSchedule.types, ['tea_break_1', 'lunch', 'tea_break_2']);
+    expect(AttendanceBreakSchedule.names,
+        ['Tea Break 1', 'Lunch Break', 'Tea Break 2']);
+    expect(AttendanceBreakSchedule.durationsMinutes, [15, 30, 15]);
+    expect(AttendanceBreakSchedule.canStart(DateTime(2026, 9, 24), 0), isTrue);
+    final startedAt = DateTime(2026, 9, 24, 9);
     expect(
-      AttendanceBreak(
-        id: 'afternoon_break',
-        attendanceId: attendance.id,
-        breakType: 'afternoon',
-        startTime: startedAt,
-      ).allowanceSeconds,
-      15 * 60,
-    );
+        AttendanceBreak(
+                id: 'b',
+                attendanceId: 'a',
+                breakType: 'lunch',
+                startTime: startedAt)
+            .durationAt(startedAt.add(const Duration(minutes: 45))),
+        45 * 60);
   });
 
-  testWidgets('Home break controls show progress for both departments',
+  testWidgets('break selection preserves one-time states for both departments',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     for (final department in [Department.tech, Department.telecalling]) {
@@ -87,8 +53,10 @@ void main() {
             AttendanceBreak(
               id: 'break_ui',
               attendanceId: 'att_break_ui',
-              breakType: 'morning',
-              startTime: now.subtract(const Duration(minutes: 5)),
+              breakType: 'lunch',
+              startTime: now.subtract(const Duration(minutes: 35)),
+              endTime: now.subtract(const Duration(minutes: 5)),
+              durationSeconds: 30 * 60,
             ),
           ],
         ),
@@ -110,27 +78,36 @@ void main() {
           staff: staff,
           workMode: 'Office',
           workLocation: null,
-          
           onNavigate: (_) {},
           onLogout: () {},
         ),
       ));
-
-      expect(find.text('Break in Progress'), findsWidgets);
-      expect(find.text('Morning Break'), findsOneWidget);
-      expect(find.textContaining(RegExp(r'elapsed')), findsOneWidget);
-      expect(find.text('End Break'), findsOneWidget);
-
-      await tester.tap(find.text('End Break'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Breaks'), findsOneWidget);
-      expect(find.text('Morning Break'), findsOneWidget);
+      expect(find.text('Start Break'), findsOneWidget);
+      await tester.tap(find.text('Start Break'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose a break'), findsOneWidget);
+      expect(find.text('Tea Break 1'), findsOneWidget);
       expect(find.text('Lunch Break'), findsOneWidget);
-      expect(find.text('Afternoon Break'), findsOneWidget);
-      expect(find.text('Completed'), findsOneWidget);
-      expect(find.textContaining('Available'), findsNWidgets(2));
-      expect(find.text('Start Break'), findsNWidgets(2));
+      expect(find.text('Tea Break 2'), findsOneWidget);
+      expect(find.text('30 minutes · Completed'), findsOneWidget);
+      expect(find.text('15 minutes · Available'), findsNWidgets(2));
+      expect(
+          tester
+              .widget<ListTile>(find
+                  .ancestor(
+                      of: find.text('30 minutes · Completed'),
+                      matching: find.byType(ListTile))
+                  .first)
+              .enabled,
+          isFalse);
+      await tester.tap(find.text('Tea Break 1').last);
+      await tester.pumpAndSettle();
+      expect(
+          repository.attendanceList.value.single.breaks.map((b) => b.breakType),
+          contains('tea_break_1'));
+      expect(find.text('Break in Progress'), findsWidgets);
     }
   });
 
@@ -177,7 +154,6 @@ void main() {
           staff: staff,
           workMode: 'Office',
           workLocation: null,
-          
           onNavigate: (_) {},
           onLogout: () {},
         ),
@@ -211,7 +187,6 @@ void main() {
           staff: staff,
           workMode: 'Office',
           workLocation: null,
-          
           onNavigate: (_) {},
           onLogout: () {},
         ),
@@ -222,7 +197,8 @@ void main() {
       await tester.tap(find.text('Privacy Policy'));
       await tester.pumpAndSettle();
       expect(find.text('Privacy Policy'), findsWidgets);
-      expect(find.textContaining('Your privacy is important to us.'), findsOneWidget);
+      expect(find.textContaining('Your privacy is important to us.'),
+          findsOneWidget);
 
       await tester.tap(find.byIcon(Icons.arrow_back));
       await tester.pumpAndSettle();
@@ -231,7 +207,10 @@ void main() {
       await tester.tap(find.text('Terms & Conditions'));
       await tester.pumpAndSettle();
       expect(find.text('Terms & Conditions'), findsWidgets);
-      expect(find.textContaining('Users are responsible for keeping their account'), findsOneWidget);
+      expect(
+          find.textContaining(
+              'Users are responsible for keeping their account'),
+          findsOneWidget);
     }
   });
 
@@ -252,16 +231,14 @@ void main() {
       await tester.pumpWidget(StatefulBuilder(
         builder: (context, updateParent) => MaterialApp(
           home: StaffHubShell(
-          repository: MockHRRepository(),
+            repository: MockHRRepository(),
             key: ValueKey(department),
             pageIndex: selectedPage,
             department: department,
             staff: staff,
             workMode: 'Office',
             workLocation: null,
-            
-            onNavigate: (index) =>
-                updateParent(() => selectedPage = index),
+            onNavigate: (index) => updateParent(() => selectedPage = index),
             onLogout: () {},
           ),
         ),
@@ -295,16 +272,17 @@ void main() {
       final composer = find.byKey(const ValueKey('chat-message-composer'));
       await tester.enterText(composer, 'Hello from $department');
       await tester.pumpAndSettle();
-        expect(tester.widget<TextField>(composer).controller!.text,
+      expect(tester.widget<TextField>(composer).controller!.text,
           'Hello from $department');
       await tester.tap(find.byTooltip('Send message'));
       await tester.pumpAndSettle();
-        expect(tester.widget<TextField>(composer).controller!.text, isEmpty);
+      expect(tester.widget<TextField>(composer).controller!.text, isEmpty);
       expect(find.text('Hello from $department'), findsOneWidget);
     }
   });
 
-  testWidgets('Staff department selection opens the login screen', (WidgetTester tester) async {
+  testWidgets('Staff department selection opens the login screen',
+      (WidgetTester tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -322,7 +300,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Profile page includes attendance, leave, and chat quick links', (WidgetTester tester) async {
+  testWidgets('Profile page includes attendance, leave, and chat quick links',
+      (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
 
     expect(find.text('Attendance'), findsOneWidget);
@@ -330,7 +309,8 @@ void main() {
     expect(find.text('Chat'), findsOneWidget);
   });
 
-  testWidgets('Profile attendance link opens the attendance page', (WidgetTester tester) async {
+  testWidgets('Profile attendance link opens the attendance page',
+      (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
 
     await tester.tap(find.text('Attendance'));
@@ -339,7 +319,8 @@ void main() {
     expect(find.text('EDIT PROFILE'), findsOneWidget);
   });
 
-  testWidgets('Staff tabs and Settings notification options work', (WidgetTester tester) async {
+  testWidgets('Staff tabs and Settings notification options work',
+      (WidgetTester tester) async {
     var selectedPage = 0;
     var selectedThemeMode = ThemeMode.light;
     addTearDown(() => staffHubThemeMode = ThemeMode.light);
@@ -372,7 +353,6 @@ void main() {
           pageIndex: selectedPage,
           department: 'Tech',
           staff: staff,
-          
           workMode: 'Office',
           workLocation: null,
           themeMode: selectedThemeMode,
@@ -389,14 +369,15 @@ void main() {
     expect(find.text('Home'), findsWidgets);
     expect(find.text('Punch'), findsOneWidget);
     expect(find.text('Leave'), findsOneWidget);
-    expect(find.descendant(
-        of: find.byType(NavigationBar), matching: find.text('Profile')),
+    expect(
+        find.descendant(
+            of: find.byType(NavigationBar), matching: find.text('Profile')),
         findsNothing);
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Chat'), findsNothing);
 
     await tester.tap(find.descendant(
-      of: find.byType(NavigationBar), matching: find.text('Settings')));
+        of: find.byType(NavigationBar), matching: find.text('Settings')));
     await tester.pumpAndSettle();
 
     expect(find.text('Profile'), findsWidgets);
@@ -456,75 +437,77 @@ void main() {
       tester.widget<Text>(find.text('Submit Request')).style?.color,
       Colors.white,
     );
-      expect(
-        find.byWidgetPredicate((widget) =>
-            widget is Container &&
-            widget.decoration is BoxDecoration &&
-            (widget.decoration as BoxDecoration).color ==
-                const Color(0xff151d26)),
-        findsNWidgets(2),
-      );
-      expect(
-        tester
-            .widget<DropdownButtonFormField<String>>(
-                find.byType(DropdownButtonFormField<String>))
-            .decoration
-            .fillColor,
-        const Color(0xff19232d),
-      );
-      expect(
-        IconTheme.of(tester.element(find.byIcon(Icons.calendar_month).first))
-            .color,
-        Theme.of(tester.element(find.byType(Scaffold).first))
-            .colorScheme
-            .onPrimaryContainer,
-      );
+    expect(
+      find.byWidgetPredicate((widget) =>
+          widget is Container &&
+          widget.decoration is BoxDecoration &&
+          (widget.decoration as BoxDecoration).color ==
+              const Color(0xff151d26)),
+      findsNWidgets(2),
+    );
+    expect(
+      tester
+          .widget<DropdownButtonFormField<String>>(
+              find.byType(DropdownButtonFormField<String>))
+          .decoration
+          .fillColor,
+      const Color(0xff19232d),
+    );
+    expect(
+      IconTheme.of(tester.element(find.byIcon(Icons.calendar_month).first))
+          .color,
+      Theme.of(tester.element(find.byType(Scaffold).first))
+          .colorScheme
+          .onPrimaryContainer,
+    );
 
-      await tester.tap(find.byType(DropdownButtonFormField<String>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Medical Leave').last);
-      await tester.pumpAndSettle();
-      expect(find.text('View Document'), findsNothing);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Medical Leave').last);
+    await tester.pumpAndSettle();
+    expect(find.text('View Document'), findsNothing);
 
-      await tester.tap(find.byType(DropdownButtonFormField<String>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Sick Leave').last);
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byType(TextField).first, 'Medical appointment');
-      expect(FocusManager.instance.primaryFocus?.hasFocus, isTrue);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sick Leave').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Medical appointment');
+    expect(FocusManager.instance.primaryFocus?.hasFocus, isTrue);
 
-      await tester.ensureVisible(find.text('Submit Request'));
-      await tester.tap(find.text('Submit Request'));
-      await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Submit Request'));
+    await tester.tap(find.text('Submit Request'));
+    await tester.pumpAndSettle();
 
-      expect(tester.testTextInput.isVisible, isFalse);
-      expect(find.text('Leave request submitted. Check Home for the update.'),
-          findsOneWidget);
-      expect(find.text('Medical appointment'), findsOneWidget);
-      expect(find.text('Submit Request'), findsOneWidget);
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(find.text('Leave request submitted. Check Home for the update.'),
+        findsOneWidget);
+    expect(find.text('Medical appointment'), findsOneWidget);
+    expect(find.text('Submit Request'), findsOneWidget);
 
-      await tester.tap(find.descendant(
-          of: find.byType(NavigationBar), matching: find.text('Home')));
-      await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byType(NavigationBar), matching: find.text('Home')));
+    await tester.pumpAndSettle();
 
-      expect(
-        tester.widget<Text>(find.textContaining('Completed client installation'))
-            .style
-            ?.color,
-        const Color(0xffeef2f7),
-      );
-      expect(
-        find.byWidgetPredicate((widget) =>
-            widget is Container &&
-            widget.decoration is BoxDecoration &&
-            (widget.decoration as BoxDecoration).color ==
-                const Color(0xff19232d)),
-        findsOneWidget,
-      );
+    expect(
+      tester
+          .widget<Text>(find.textContaining('Completed client installation'))
+          .style
+          ?.color,
+      const Color(0xffeef2f7),
+    );
+    expect(
+      find.byWidgetPredicate((widget) =>
+          widget is Container &&
+          widget.decoration is BoxDecoration &&
+          (widget.decoration as BoxDecoration).color ==
+              const Color(0xff19232d)),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('Staff home page updates leave status to Approved when HR accepts for Tech and Telecalling', (tester) async {
+  testWidgets(
+      'Staff home page updates leave status to Approved when HR accepts for Tech and Telecalling',
+      (tester) async {
     for (final dept in ['Tech', 'Telecalling']) {
       final repository = MockHRRepository();
       final staff = Staff(
@@ -570,7 +553,10 @@ void main() {
       // Home page initially shows Leave Request Update with Pending
       expect(find.text('Leave Request Update'), findsOneWidget);
       expect(find.text('Pending'), findsOneWidget);
-      expect(find.text('Your request was submitted and is waiting for HR approval.'), findsOneWidget);
+      expect(
+          find.text(
+              'Your request was submitted and is waiting for HR approval.'),
+          findsOneWidget);
 
       // HR approves the leave request
       await repository.reviewLeave(leaveReq.id, true);
@@ -579,7 +565,8 @@ void main() {
       // Home page immediately reflects the HR Approved status!
       expect(find.text('Leave Request Update'), findsOneWidget);
       expect(find.text('Approved'), findsOneWidget);
-      expect(find.text('Your request has been approved by HR.'), findsOneWidget);
+      expect(
+          find.text('Your request has been approved by HR.'), findsOneWidget);
     }
   });
 }

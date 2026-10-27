@@ -31,12 +31,15 @@ The updated Flutter client expects these authenticated routes, which must be
 implemented by the backend before live break persistence is available:
 
 * `POST /staff/attendance/{attendanceId}/breaks/start` with
-  `{"breakType":"morning|lunch|afternoon"}`.
+  `{"breakType":"tea_break_1|lunch|tea_break_2"}`.
 * `POST /staff/attendance/{attendanceId}/breaks/end` with the same `breakType`.
 * Both return `{ "success": true }` only after writing; GET
   `/staff/attendance` returns the attendance record with its break array,
-  including stable break id, type, ISO-8601 `startTime`, nullable `endTime`, and
-  duration. The client refreshes attendance after every successful operation.
+  including stable break id, type, ISO-8601 `startTime`, nullable `endTime`,
+  duration, and persisted completion status. The client refreshes attendance
+  after every successful operation. `tea_break_1` and `tea_break_2` must be
+  stored as distinct values; mapping both to a generic type loses their
+  independent one-time usage identity.
 
 Backend handlers must derive the employee from the bearer token, verify that
 the attendance record belongs to that employee and shift, permit any of the
@@ -71,6 +74,13 @@ period, and effective date. Check-out should update and return `checkOut` and
 must derive identity/department from the authenticated session and apply its
 configured departmental schedule. These are required contract expectations,
 not claims about the currently deployed server.
+
+Backend implementation is not available in this Flutter checkout. The deployed
+server's support for these distinct types, completion persistence, and
+simultaneous-break enforcement is unverified and remains required before live
+break persistence can be claimed. Existing `morning`/`afternoon` records are
+recognized by the client as Tea Break 1/2 for backwards-compatible display and
+consumption checks.
 
 Live authenticated verification was not performed. Automated API tests use a
 mock HTTP adapter and establish only the StaffHub request, parsing, and refresh

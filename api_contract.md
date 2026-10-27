@@ -77,8 +77,8 @@ All endpoints below are **NOT VERIFIED** because we lack valid credentials to by
 * POST /api/staff/attendance/check-in
 * POST /api/staff/attendance/check-out
 * GET /api/staff/attendance
-* POST /api/staff/attendance/:attendanceId/breaks/start (required by updated client; backend implementation unverified)
-* POST /api/staff/attendance/:attendanceId/breaks/end (required by updated client; backend implementation unverified)
+* POST /api/staff/attendance/:attendanceId/breaks/start with `breakType` equal to `tea_break_1`, `lunch`, or `tea_break_2` (backend implementation unverified)
+* POST /api/staff/attendance/:attendanceId/breaks/end with the same `breakType` (backend implementation unverified)
 * POST /api/staff/leaves
 * GET /api/staff/leaves
 * GET /api/staff/leaves/:id

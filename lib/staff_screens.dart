@@ -28,9 +28,9 @@ String _formatShortDuration(int seconds) {
 }
 
 String _breakTypeLabel(String type) => switch (type) {
-      'morning' => '☕ Morning Break',
+      'morning' || 'tea_break_1' => '☕ Tea Break 1',
       'lunch' => '🍽 Lunch Break',
-      'afternoon' => '☕ Afternoon Break',
+      'afternoon' || 'tea_break_2' => '☕ Tea Break 2',
       _ => 'Break',
     };
 
@@ -81,8 +81,6 @@ class StaffHubShell extends StatefulWidget {
 }
 
 class _StaffHubShellState extends State<StaffHubShell> {
-  late final Timer _breakTimer;
-  final Set<String> _autoEndingBreaks = {};
   bool _isLoadingAttendance = false;
   bool _isPunching = false;
   String? _attendanceError;
@@ -92,9 +90,6 @@ class _StaffHubShellState extends State<StaffHubShell> {
     super.initState();
     widget.repository.attendanceList.addListener(_onAttendanceChanged);
     widget.repository.leaveRequests.addListener(_onLeavesChanged);
-    _breakTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      unawaited(_endExpiredBreakIfNeeded());
-    });
     _loadAttendance();
     unawaited(widget.repository.fetchStaffLeaves());
   }
@@ -132,7 +127,8 @@ class _StaffHubShellState extends State<StaffHubShell> {
       widget.repository.leaveRequests.addListener(_onLeavesChanged);
       _loadAttendance();
       unawaited(widget.repository.fetchStaffLeaves());
-    } else if (oldWidget.pageIndex != widget.pageIndex && widget.pageIndex == 0) {
+    } else if (oldWidget.pageIndex != widget.pageIndex &&
+        widget.pageIndex == 0) {
       unawaited(widget.repository.fetchStaffLeaves());
     }
   }
@@ -145,32 +141,10 @@ class _StaffHubShellState extends State<StaffHubShell> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _endExpiredBreakIfNeeded() async {
-    final attendance = _todayAttendance;
-    final activeBreak =
-        attendance?.breaks.where((item) => item.isActive).firstOrNull;
-    if (attendance == null ||
-        attendance.checkOutTime != null ||
-        activeBreak == null ||
-        DateTime.now().difference(activeBreak.startTime).inSeconds <
-            activeBreak.allowanceSeconds ||
-        !_autoEndingBreaks.add(attendance.id)) {
-      return;
-    }
-    try {
-      await widget.repository.endExpiredBreak(attendance.id);
-    } catch (_) {
-      // The next timer tick retries if the break is still active.
-    } finally {
-      _autoEndingBreaks.remove(attendance.id);
-    }
-  }
-
   @override
   void dispose() {
     widget.repository.attendanceList.removeListener(_onAttendanceChanged);
     widget.repository.leaveRequests.removeListener(_onLeavesChanged);
-    _breakTimer.cancel();
     super.dispose();
   }
 
@@ -199,10 +173,8 @@ class _StaffHubShellState extends State<StaffHubShell> {
     final list = widget.repository.leaveRequests.value;
     final staffId = widget.staff.id;
     final myRequests = list
-        .where((r) =>
-            staffId.isEmpty ||
-            r.staffId.isEmpty ||
-            r.staffId == staffId)
+        .where(
+            (r) => staffId.isEmpty || r.staffId.isEmpty || r.staffId == staffId)
         .toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final latest = myRequests.firstOrNull;
@@ -211,6 +183,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
     }
     return _leaveRequest;
   }
+
   int? _settingsSubPage;
   bool _chatSearchOpen = false;
   bool _chatNotifications = true;
@@ -307,9 +280,12 @@ class _StaffHubShellState extends State<StaffHubShell> {
         final message = error is ApiException && error.isUnauthorized
             ? 'Your session has expired. Please sign in again.'
             : error.toString().replaceFirst('Exception: ', '');
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
       }
+      // Reconcile against the server after a failed mutation or refresh so
+      // the selector never relies on a stale cached availability state.
+      await _loadAttendance();
     }
   }
 
@@ -687,10 +663,8 @@ class _HomePageState extends State<_HomePage> {
     final list = widget.repository.leaveRequests.value;
     final staffId = widget.staffId;
     final myRequests = list
-        .where((r) =>
-            staffId.isEmpty ||
-            r.staffId.isEmpty ||
-            r.staffId == staffId)
+        .where(
+            (r) => staffId.isEmpty || r.staffId.isEmpty || r.staffId == staffId)
         .toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final latest = myRequests.firstOrNull;
@@ -716,6 +690,85 @@ class _HomePageState extends State<_HomePage> {
       }
     } finally {
       if (mounted) setState(() => _isLoadingUpdate = false);
+    }
+  }
+
+  Future<void> _chooseAndStartBreak() async {
+    final attendance = widget.attendance;
+    if (attendance == null ||
+        !widget.checkedIn ||
+        _breakActionInFlight ||
+        widget.isLoadingAttendance ||
+        widget.attendanceError != null) return;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Choose a break',
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: _ink)),
+                const SizedBox(height: 6),
+                Text('You can start your break whenever you need it.',
+                    style: TextStyle(fontSize: 13, color: _muted)),
+                const SizedBox(height: 12),
+                for (var i = 0;
+                    i < AttendanceBreakSchedule.types.length;
+                    i++) ...[
+                  Builder(builder: (context) {
+                    final type = AttendanceBreakSchedule.types[i];
+                    final item = attendance.breaks
+                        .where((b) =>
+                            b.breakType == type ||
+                            (type == 'tea_break_1' &&
+                                b.breakType == 'morning') ||
+                            (type == 'tea_break_2' &&
+                                b.breakType == 'afternoon'))
+                        .firstOrNull;
+                    final active = attendance.breaks.any((b) => b.isActive);
+                    final used = item?.isCompleted == true;
+                    final inProgress = item?.isActive == true;
+                    final disabled = used || active;
+                    final status = used
+                        ? 'Completed'
+                        : inProgress
+                            ? 'In Progress'
+                            : 'Available';
+                    return ListTile(
+                      leading: Icon(
+                          i == 1
+                              ? Icons.restaurant_outlined
+                              : Icons.coffee_outlined,
+                          color: disabled ? _muted : _blue),
+                      title: Text(AttendanceBreakSchedule.names[i]),
+                      subtitle: Text(
+                          '${AttendanceBreakSchedule.durationsMinutes[i]} minutes · $status'),
+                      enabled: !disabled,
+                      onTap:
+                          disabled ? null : () => Navigator.pop(context, type),
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _breakActionInFlight = true);
+    try {
+      await widget.onToggleBreak(selected);
+    } finally {
+      if (mounted) setState(() => _breakActionInFlight = false);
     }
   }
 
@@ -774,13 +827,15 @@ class _HomePageState extends State<_HomePage> {
     final apiStatus = attendance?.status.trim();
     final attendanceStatus = attendance?.isLate == true
         ? 'Late'
-        : apiStatus == null || apiStatus.isEmpty || apiStatus.toUpperCase() == 'PRESENT'
+        : apiStatus == null ||
+                apiStatus.isEmpty ||
+                apiStatus.toUpperCase() == 'PRESENT'
             ? 'Working'
             : '${apiStatus[0].toUpperCase()}${apiStatus.substring(1).toLowerCase()}';
     final activeBreaks =
         attendance?.breaks.where((b) => b.isActive).toList() ?? [];
     final activeBreak = activeBreaks.isEmpty ? null : activeBreaks.first;
-    
+
     final hasActiveShift = widget.checkedIn || widget.checkOutTime != null;
     final endTime = widget.checkOutTime ?? DateTime.now();
     final breakSeconds =
@@ -938,48 +993,59 @@ class _HomePageState extends State<_HomePage> {
                                 : 'Please check in to start your shift',
                         style: TextStyle(fontSize: 12, color: _muted)),
                     const SizedBox(height: 6),
-                    Text('Breaks', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _ink)),
-                    const SizedBox(height: 4),
-                    for (var index = 0; index < AttendanceBreakSchedule.types.length; index++) ...[
-                      Builder(builder: (context) {
-                        final type = AttendanceBreakSchedule.types[index];
-                        final name = AttendanceBreakSchedule.names[index];
-                        final scheduled = TimeOfDay(
-                          hour: AttendanceBreakSchedule.startTimes[index].$1,
-                          minute: AttendanceBreakSchedule.startTimes[index].$2,
-                        ).format(context);
-                        final item = attendance?.breaks.where((b) => b.breakType == type).firstOrNull;
-                        final isActive = item?.isActive == true;
-                        final elapsed = isActive ? DateTime.now().difference(item!.startTime) : Duration.zero;
-                        final elapsedText = '${elapsed.inMinutes.toString().padLeft(2, '0')}:${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
-                        final status = isActive ? 'On Break' : item != null ? 'Completed' : 'Available';
-                        final otherBreakActive = activeBreak != null && !isActive;
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Row(children: [
-                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text(name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _ink)),
-                              Text('Scheduled $scheduled · ${AttendanceBreak.allowanceSecondsFor(type) ~/ 60} min · $status${isActive ? ' · Started ${TimeOfDay.fromDateTime(item!.startTime).format(context)} · $elapsedText elapsed' : ''}', style: TextStyle(fontSize: 11, color: _muted)),
-                            ])),
-                            OutlinedButton(
-                              onPressed: !widget.checkedIn || _breakActionInFlight || otherBreakActive || (item != null && !isActive)
-                                  ? null
-                                  : () async {
-                                      setState(() => _breakActionInFlight = true);
-                                      try {
-                                        await widget.onToggleBreak(isActive ? null : type);
-                                      } finally {
-                                        if (mounted) setState(() => _breakActionInFlight = false);
-                                      }
-                                    },
-                              child: Text(isActive ? 'End Break' : item != null ? 'Completed' : 'Start Break'),
-                            ),
-                          ]),
-                        );
-                      }),
+                    if (activeBreak != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                          '${AttendanceBreakSchedule.nameForType(activeBreak.breakType)} · Started ${TimeOfDay.fromDateTime(activeBreak.startTime).format(context)} · ${_formatShortDuration(activeBreak.durationAt(now))} elapsed',
+                          style: TextStyle(fontSize: 12, color: _muted)),
+                    ] else ...[
+                      const SizedBox(height: 8),
+                      Text('Upcoming Break',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: _ink)),
+                      Text(
+                          'Tea Breaks and Lunch Break · Whenever you need them',
+                          style: TextStyle(fontSize: 12, color: _muted)),
                     ],
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     Row(children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: !widget.checkedIn ||
+                                  widget.isPunching ||
+                                  widget.isLoadingAttendance ||
+                                  widget.attendanceError != null ||
+                                  _breakActionInFlight
+                              ? null
+                              : activeBreak != null
+                                  ? () async {
+                                      setState(
+                                          () => _breakActionInFlight = true);
+                                      try {
+                                        await widget.onToggleBreak(null);
+                                      } finally {
+                                        if (mounted)
+                                          setState(() =>
+                                              _breakActionInFlight = false);
+                                      }
+                                    }
+                                  : _chooseAndStartBreak,
+                          icon: Icon(
+                              activeBreak == null
+                                  ? Icons.free_breakfast_outlined
+                                  : Icons.stop_circle_outlined,
+                              size: 15),
+                          label: Text(
+                              _breakActionInFlight
+                                  ? 'Please wait...'
+                                  : activeBreak == null
+                                      ? 'Start Break'
+                                      : 'End Break',
+                              style: const TextStyle(fontSize: 12)),
+                        ),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: FilledButton.icon(
@@ -1185,8 +1251,7 @@ class _HomePageState extends State<_HomePage> {
                             _statusForeground(activeLeave.status)),
                       ]),
                       const SizedBox(height: 10),
-                      Text(
-                          '${activeLeave.type} · ${activeLeave.dates}',
+                      Text('${activeLeave.type} · ${activeLeave.dates}',
                           style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,

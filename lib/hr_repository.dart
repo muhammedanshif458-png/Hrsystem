@@ -50,7 +50,6 @@ abstract class HRRepository {
   Future<Attendance> checkIn(String staffId);
   Future<void> checkOut(String attendanceId);
   Future<void> toggleBreak(String attendanceId, {String? breakType});
-  Future<void> endExpiredBreak(String attendanceId);
   Future<void> requestLeave(
       {required String staffId,
       required String fromDate,
@@ -504,18 +503,21 @@ class HRRepositoryImpl implements HRRepository {
   Future<void> fetchStaffAttendance() async {
     try {
       final response = await _api.get(ApiConfig.attendance);
-      if (response is! Map || response['success'] != true || response['data'] is! List) {
-        throw const FormatException('Malformed attendance response from server.');
+      if (response is! Map ||
+          response['success'] != true ||
+          response['data'] is! List) {
+        throw const FormatException(
+            'Malformed attendance response from server.');
       }
-      attendanceList.value = (response['data'] as List)
-          .map((e) {
-            if (e is! Map) throw const FormatException('Malformed attendance record from server.');
-            return Attendance.fromJson(
-              Map<String, dynamic>.from(e),
-              staffId: currentUser.value?.id,
-            );
-          })
-          .toList();
+      attendanceList.value = (response['data'] as List).map((e) {
+        if (e is! Map)
+          throw const FormatException(
+              'Malformed attendance record from server.');
+        return Attendance.fromJson(
+          Map<String, dynamic>.from(e),
+          staffId: currentUser.value?.id,
+        );
+      }).toList();
       await _saveAttendance();
     } catch (e) {
       debugPrint('fetchStaffAttendance error: $e');
@@ -527,7 +529,9 @@ class HRRepositoryImpl implements HRRepository {
   Future<Attendance> checkIn(String staffId) async {
     try {
       final response = await _api.post(ApiConfig.attendanceCheckIn, body: {});
-      if (response is! Map || response['success'] != true || response['data'] is! Map) {
+      if (response is! Map ||
+          response['success'] != true ||
+          response['data'] is! Map) {
         throw const FormatException('Malformed check-in response from server.');
       }
       final returned = Attendance.fromJson(
@@ -536,11 +540,14 @@ class HRRepositoryImpl implements HRRepository {
       );
       // Attendance GET is the authoritative refreshed record; never classify late locally.
       await fetchStaffAttendance();
-      final refreshed = attendanceList.value.where((record) =>
-        (returned.id.isNotEmpty && record.id == returned.id) ||
-        (returned.id.isEmpty && record.isToday &&
-          (record.staffId.isEmpty || record.staffId == (currentUser.value?.id ?? staffId)))
-      ).firstOrNull;
+      final refreshed = attendanceList.value
+          .where((record) =>
+              (returned.id.isNotEmpty && record.id == returned.id) ||
+              (returned.id.isEmpty &&
+                  record.isToday &&
+                  (record.staffId.isEmpty ||
+                      record.staffId == (currentUser.value?.id ?? staffId))))
+          .firstOrNull;
       return refreshed ?? returned;
     } on ApiException catch (e) {
       if (e.statusCode == 400 &&
@@ -559,8 +566,11 @@ class HRRepositoryImpl implements HRRepository {
     try {
       final response = await _api.post(ApiConfig.attendanceCheckOut, body: {});
       if (response is! Map || response['success'] != true) {
-        final message = response is Map ? response['message']?.toString() : null;
-        throw ApiException(statusCode: null, message: message ?? 'Check-out was not confirmed by the server.');
+        final message =
+            response is Map ? response['message']?.toString() : null;
+        throw ApiException(
+            statusCode: null,
+            message: message ?? 'Check-out was not confirmed by the server.');
       }
       await fetchStaffAttendance();
     } on ApiException catch (e) {
@@ -599,14 +609,16 @@ class HRRepositoryImpl implements HRRepository {
       );
       _validateBreakResponse(response, 'end');
     } else {
-      if (a.breaks.length >= AttendanceBreakSchedule.types.length) {
-        throw Exception('All breaks for today have been used.');
-      }
       final selectedType = breakType;
-      if (selectedType == null || !AttendanceBreakSchedule.types.contains(selectedType)) {
-        throw ArgumentError.value(breakType, 'breakType', 'Choose one of the configured breaks.');
+      if (selectedType == null ||
+          !AttendanceBreakSchedule.types.contains(selectedType)) {
+        throw ArgumentError.value(
+            breakType, 'breakType', 'Choose one of the configured breaks.');
       }
-      if (a.breaks.any((item) => item.breakType == selectedType)) {
+      if (a.breaks.any((item) =>
+          item.breakType == selectedType ||
+          (selectedType == 'tea_break_1' && item.breakType == 'morning') ||
+          (selectedType == 'tea_break_2' && item.breakType == 'afternoon'))) {
         throw Exception('This break has already been completed.');
       }
       final response = await _api.post(
@@ -622,31 +634,11 @@ class HRRepositoryImpl implements HRRepository {
   void _validateBreakResponse(dynamic response, String operation) {
     if (response is! Map || response['success'] != true) {
       final message = response is Map ? response['message']?.toString() : null;
-      throw ApiException(statusCode: null,
-          message: message ?? 'The server did not confirm the break $operation.');
+      throw ApiException(
+          statusCode: null,
+          message:
+              message ?? 'The server did not confirm the break $operation.');
     }
-  }
-
-  @override
-  Future<void> endExpiredBreak(String attendanceId) async {
-    await _attendanceRestored;
-    final now = DateTime.now();
-    final found =
-        attendanceList.value.where((a) => a.id == attendanceId).toList();
-    if (found.isEmpty) return;
-    final attendance = found.first;
-    if (attendance.checkOutTime != null) return;
-    final active = attendance.breaks.where((b) => b.isActive).firstOrNull;
-    if (active == null ||
-        now.difference(active.startTime).inSeconds < active.allowanceSeconds) {
-      return;
-    }
-    final response = await _api.post(
-      ApiConfig.attendanceBreakEnd(attendance.id),
-      body: {'breakType': active.breakType},
-    );
-    _validateBreakResponse(response, 'end');
-    await fetchStaffAttendance();
   }
 
   Future<void> _restoreAttendance() async {

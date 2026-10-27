@@ -78,23 +78,21 @@ class Status {
 }
 
 class AttendanceBreakSchedule {
-  static const List<String> types = ['morning', 'lunch', 'afternoon'];
+  static const List<String> types = ['tea_break_1', 'lunch', 'tea_break_2'];
   static const List<String> names = [
-    'Morning Break',
+    'Tea Break 1',
     'Lunch Break',
-    'Afternoon Break',
+    'Tea Break 2'
   ];
-  static const List<(int, int)> startTimes = [(11, 30), (13, 30), (16, 0)];
+  static const List<int> durationsMinutes = [15, 30, 15];
 
-  static DateTime startsAt(DateTime date, int index) {
-    final time = startTimes[index];
-    return DateTime(date.year, date.month, date.day, time.$1, time.$2);
-  }
-
+  // Breaks may start at any time during an active shift.
   static bool canStart(DateTime now, int index) =>
-      index >= 0 && index < startTimes.length && !now.isBefore(startsAt(now, index));
+      index >= 0 && index < types.length;
 
   static String nameForType(String type) {
+    if (type == 'morning') return names[0];
+    if (type == 'afternoon') return names[2];
     final index = types.indexOf(type);
     return index < 0 ? 'Break' : names[index];
   }
@@ -117,13 +115,14 @@ class AttendanceBreak {
   final DateTime? endTime;
   final int durationSeconds;
   bool get isActive => endTime == null;
+  bool get isCompleted => endTime != null;
   static int allowanceSecondsFor(String breakType) =>
-      breakType == 'lunch' ? 30 * 60 : 15 * 60;
+      (breakType == 'lunch' ? 30 : 15) * 60;
   int get allowanceSeconds => allowanceSecondsFor(breakType);
   int durationAt(DateTime now) {
     if (endTime != null) return durationSeconds;
     final elapsed = now.difference(startTime).inSeconds;
-    return elapsed.clamp(0, allowanceSeconds);
+    return elapsed.clamp(0, 1 << 31);
   }
 }
 
@@ -204,13 +203,15 @@ class Attendance {
         '';
 
     DateTime? inAt;
-    final rawCheckIn = json['checkIn'] ?? json['checkInAt'] ?? json['checkInTimestamp'];
+    final rawCheckIn =
+        json['checkIn'] ?? json['checkInAt'] ?? json['checkInTimestamp'];
     if (rawCheckIn != null && rawCheckIn.toString().isNotEmpty) {
       inAt = DateTime.tryParse(rawCheckIn.toString())?.toLocal();
     }
 
     DateTime? outAt;
-    final rawCheckOut = json['checkOut'] ?? json['checkOutAt'] ?? json['checkOutTimestamp'];
+    final rawCheckOut =
+        json['checkOut'] ?? json['checkOutAt'] ?? json['checkOutTimestamp'];
     if (rawCheckOut != null && rawCheckOut.toString().isNotEmpty) {
       outAt = DateTime.tryParse(rawCheckOut.toString())?.toLocal();
     }
@@ -230,14 +231,16 @@ class Attendance {
     }
 
     String inTime = '';
-    if (json['checkInTime'] != null && json['checkInTime'].toString().isNotEmpty) {
+    if (json['checkInTime'] != null &&
+        json['checkInTime'].toString().isNotEmpty) {
       inTime = json['checkInTime'].toString();
     } else if (inAt != null) {
       inTime = _formatTimeOfDay(inAt);
     }
 
     String? outTime;
-    if (json['checkOutTime'] != null && json['checkOutTime'].toString().isNotEmpty) {
+    if (json['checkOutTime'] != null &&
+        json['checkOutTime'].toString().isNotEmpty) {
       outTime = json['checkOutTime'].toString();
     } else if (outAt != null) {
       outTime = _formatTimeOfDay(outAt);
@@ -250,7 +253,8 @@ class Attendance {
           : double.tryParse(json['workingHours'].toString()) ?? 0.0;
       if (wh > 0) {
         final totalMins = (wh * 60).round();
-        worked = '${totalMins ~/ 60}h ${(totalMins % 60).toString().padLeft(2, '0')}m';
+        worked =
+            '${totalMins ~/ 60}h ${(totalMins % 60).toString().padLeft(2, '0')}m';
       }
     }
 
@@ -260,15 +264,20 @@ class Attendance {
       for (final b in rawBreaks) {
         if (b is Map) {
           final bm = Map<String, dynamic>.from(b);
-          final bStart = DateTime.tryParse(bm['startTime']?.toString() ?? '') ?? DateTime.now();
-          final bEnd = DateTime.tryParse(bm['endTime']?.toString() ?? '');
+          final bStart =
+              DateTime.tryParse(bm['startTime']?.toString() ?? '')?.toLocal() ??
+                  DateTime.now();
+          final bEnd =
+              DateTime.tryParse(bm['endTime']?.toString() ?? '')?.toLocal();
           parsedBreaks.add(AttendanceBreak(
             id: bm['id']?.toString() ?? bm['_id']?.toString() ?? '',
             attendanceId: bm['attendanceId']?.toString() ?? id,
             breakType: bm['breakType']?.toString() ?? 'lunch',
             startTime: bStart,
             endTime: bEnd,
-            durationSeconds: (bm['durationSeconds'] as num?)?.toInt() ?? 0,
+            durationSeconds: bEnd == null
+                ? 0
+                : bEnd.difference(bStart).inSeconds.clamp(0, 1 << 31),
           ));
         }
       }
@@ -293,14 +302,14 @@ class Attendance {
       checkOutTime: outTime,
       workedDuration: worked,
       breakDuration: json['breakDuration']?.toString() ?? '',
-      isLate: json['isLate'] == true || json['late'] == true ||
+      isLate: json['isLate'] == true ||
+          json['late'] == true ||
           (json['status']?.toString().toUpperCase() == 'LATE'),
       minutesLate: rawMinutesLate is num
           ? rawMinutesLate.toInt()
           : int.tryParse(rawMinutesLate?.toString() ?? ''),
-      scheduleSnapshot: rawSchedule is Map
-          ? Map<String, dynamic>.from(rawSchedule)
-          : null,
+      scheduleSnapshot:
+          rawSchedule is Map ? Map<String, dynamic>.from(rawSchedule) : null,
       department: rawDepartment is Map
           ? (rawDepartment['name'] ?? rawDepartment['_id'])?.toString()
           : rawDepartment?.toString(),
@@ -314,31 +323,33 @@ class Attendance {
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'staffId': staffId,
-    'date': date,
-    'checkInTime': checkInTime,
-    'checkOutTime': checkOutTime,
-    'workedDuration': workedDuration,
-    'breakDuration': breakDuration,
-    'isLate': isLate,
-    'minutesLate': minutesLate,
-    'scheduleSnapshot': scheduleSnapshot,
-    'department': department,
-    'checkInAt': checkInAt?.toIso8601String(),
-    'checkOutAt': checkOutAt?.toIso8601String(),
-    'breakStartedAt': breakStartedAt?.toIso8601String(),
-    'totalBreakSeconds': totalBreakSeconds,
-    'status': status,
-    'breaks': breaks.map((b) => {
-      'id': b.id,
-      'attendanceId': b.attendanceId,
-      'breakType': b.breakType,
-      'startTime': b.startTime.toIso8601String(),
-      'endTime': b.endTime?.toIso8601String(),
-      'durationSeconds': b.durationSeconds,
-    }).toList(),
-  };
+        'id': id,
+        'staffId': staffId,
+        'date': date,
+        'checkInTime': checkInTime,
+        'checkOutTime': checkOutTime,
+        'workedDuration': workedDuration,
+        'breakDuration': breakDuration,
+        'isLate': isLate,
+        'minutesLate': minutesLate,
+        'scheduleSnapshot': scheduleSnapshot,
+        'department': department,
+        'checkInAt': checkInAt?.toIso8601String(),
+        'checkOutAt': checkOutAt?.toIso8601String(),
+        'breakStartedAt': breakStartedAt?.toIso8601String(),
+        'totalBreakSeconds': totalBreakSeconds,
+        'status': status,
+        'breaks': breaks
+            .map((b) => {
+                  'id': b.id,
+                  'attendanceId': b.attendanceId,
+                  'breakType': b.breakType,
+                  'startTime': b.startTime.toIso8601String(),
+                  'endTime': b.endTime?.toIso8601String(),
+                  'durationSeconds': b.durationSeconds,
+                })
+            .toList(),
+      };
 
   Attendance copyWith({
     String? id,
@@ -446,7 +457,8 @@ class LeaveRequest {
     String? documentName,
     String? documentUrl,
     String? documentId,
-  }) => LeaveRequest(
+  }) =>
+      LeaveRequest(
         id: id,
         staffId: staffId,
         fromDate: fromDate,
@@ -562,9 +574,8 @@ class DailyUpdate {
 
   factory DailyUpdate.fromJson(Map<String, dynamic> json) {
     final id = json['_id']?.toString() ?? json['id']?.toString() ?? '';
-    final staffId = json['employee']?.toString() ??
-        json['staffId']?.toString() ??
-        '';
+    final staffId =
+        json['employee']?.toString() ?? json['staffId']?.toString() ?? '';
     final rawDate = json['date'] ?? json['createdAt'];
     String date = '';
     DateTime? createdAt;
@@ -585,13 +596,13 @@ class DailyUpdate {
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'staffId': staffId,
-    'date': date,
-    'title': title,
-    'updateText': updateText,
-    'createdAt': createdAt?.toIso8601String(),
-  };
+        'id': id,
+        'staffId': staffId,
+        'date': date,
+        'title': title,
+        'updateText': updateText,
+        'createdAt': createdAt?.toIso8601String(),
+      };
 
   DailyUpdate copyWith({
     String? id,
