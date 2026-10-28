@@ -309,16 +309,23 @@ class HRRepositoryImpl implements HRRepository {
           : (userMap['name']?.toString() ?? 'Staff Member');
 
       final rawDept =
-          (empMap?['department'] ?? userMap['department'] ?? '').toString();
+          (empMap?['department'] ?? userMap['department'] ?? '').toString().trim();
       final staffDept = rawDept.toLowerCase().contains('tele')
           ? Department.telecalling
-          : Department.tech;
+          : (rawDept.toLowerCase().contains('tech')
+              ? Department.tech
+              : (rawDept.isNotEmpty ? rawDept : Department.tech));
 
       final staffStatus =
           (empMap?['status']?.toString().toUpperCase() == 'INACTIVE' ||
                   empMap?['status']?.toString().toUpperCase() == 'TERMINATED')
               ? Status.resigned
               : Status.active;
+
+      final rawSchedule = empMap?['schedule'] ??
+          empMap?['scheduleSnapshot'] ??
+          userMap['schedule'];
+      final rawShift = empMap?['shift'] ?? userMap['shift'];
 
       final staff = Staff(
         id: staffId,
@@ -334,6 +341,10 @@ class HRRepositoryImpl implements HRRepository {
             : DateTime.now().toString().split(' ').first,
         status: staffStatus,
         onLeaveToday: empMap?['status']?.toString().toUpperCase() == 'ON_LEAVE',
+        schedule: rawSchedule is Map
+            ? Map<String, dynamic>.from(rawSchedule)
+            : null,
+        shift: rawShift?.toString(),
       );
 
       currentUser.value = staff;
@@ -385,15 +396,25 @@ class HRRepositoryImpl implements HRRepository {
       final response = await _api.get(ApiConfig.staffProfile);
       if (response['success'] == true) {
         final data = response['data'];
+        final rawSchedule = data['schedule'] ?? data['scheduleSnapshot'];
+        final rawShift = data['shift']?.toString();
         final updatedStaff = currentUser.value?.copyWith(
               id: data['employeeId'] ?? currentUser.value?.id,
               name: data['firstName'] ?? currentUser.value?.name,
               department: data['department'] ?? currentUser.value?.department,
+              schedule: rawSchedule is Map
+                  ? Map<String, dynamic>.from(rawSchedule)
+                  : currentUser.value?.schedule,
+              shift: rawShift ?? currentUser.value?.shift,
             ) ??
             Staff(
               id: data['employeeId'] ?? '',
               name: data['firstName'] ?? '',
               department: data['department'] ?? Department.tech,
+              schedule: rawSchedule is Map
+                  ? Map<String, dynamic>.from(rawSchedule)
+                  : null,
+              shift: rawShift,
             );
         currentUser.value = updatedStaff;
         return updatedStaff;
@@ -626,6 +647,29 @@ class HRRepositoryImpl implements HRRepository {
         body: {'breakType': selectedType},
       );
       _validateBreakResponse(response, 'start');
+      if (response is Map && response['data'] is Map) {
+        final d = Map<String, dynamic>.from(response['data'] as Map);
+        final rawStart = d['startTime'] ?? d['breakStartedAt'];
+        if (rawStart != null && rawStart.toString().isNotEmpty) {
+          final bStart = DateTime.tryParse(rawStart.toString())?.toLocal();
+          if (bStart != null) {
+            final newBreak = AttendanceBreak(
+              id: d['id']?.toString() ?? d['_id']?.toString() ?? '',
+              attendanceId: d['attendanceId']?.toString() ?? a.id,
+              breakType: d['breakType']?.toString() ?? selectedType,
+              startTime: bStart,
+              endTime: null,
+            );
+            final updatedBreaks = List<AttendanceBreak>.from(a.breaks)
+              ..add(newBreak);
+            final updatedRecord = a.copyWith(breaks: updatedBreaks);
+            attendanceList.value = attendanceList.value.map((rec) {
+              return rec.id == a.id ? updatedRecord : rec;
+            }).toList();
+            await _saveAttendance();
+          }
+        }
+      }
     }
     // The attendance endpoint is authoritative for saved break timestamps.
     await fetchStaffAttendance();

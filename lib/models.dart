@@ -14,6 +14,8 @@ class Staff {
     this.status = Status.active,
     this.onLeaveToday = false,
     this.resignedDate,
+    this.schedule,
+    this.shift,
   });
 
   final String id;
@@ -27,6 +29,8 @@ class Staff {
   final String status;
   final bool onLeaveToday;
   final String? resignedDate;
+  final Map<String, dynamic>? schedule;
+  final String? shift;
 
   Staff copyWith({
     String? id,
@@ -40,6 +44,8 @@ class Staff {
     String? status,
     bool? onLeaveToday,
     String? resignedDate,
+    Map<String, dynamic>? schedule,
+    String? shift,
   }) {
     return Staff(
       id: id ?? this.id,
@@ -53,6 +59,8 @@ class Staff {
       status: status ?? this.status,
       onLeaveToday: onLeaveToday ?? this.onLeaveToday,
       resignedDate: resignedDate ?? this.resignedDate,
+      schedule: schedule ?? this.schedule,
+      shift: shift ?? this.shift,
     );
   }
 }
@@ -96,6 +104,14 @@ class AttendanceBreakSchedule {
     final index = types.indexOf(type);
     return index < 0 ? 'Break' : names[index];
   }
+
+  static int durationMinutesFor(String breakType) {
+    if (breakType == 'lunch') return 30;
+    if (breakType == 'tea_break_1' || breakType == 'morning') return 15;
+    if (breakType == 'tea_break_2' || breakType == 'afternoon') return 15;
+    final index = types.indexOf(breakType);
+    return index >= 0 ? durationsMinutes[index] : 15;
+  }
 }
 
 class AttendanceBreak {
@@ -117,13 +133,38 @@ class AttendanceBreak {
   bool get isActive => endTime == null;
   bool get isCompleted => endTime != null;
   static int allowanceSecondsFor(String breakType) =>
-      (breakType == 'lunch' ? 30 : 15) * 60;
+      AttendanceBreakSchedule.durationMinutesFor(breakType) * 60;
   int get allowanceSeconds => allowanceSecondsFor(breakType);
+
   int durationAt(DateTime now) {
     if (endTime != null) return durationSeconds;
     final elapsed = now.difference(startTime).inSeconds;
     return elapsed.clamp(0, 1 << 31);
   }
+
+  int remainingSecondsAt(DateTime now) {
+    if (endTime != null) return 0;
+    final elapsed = now.difference(startTime).inSeconds;
+    final remaining = allowanceSeconds - elapsed;
+    return remaining > 0 ? remaining : 0;
+  }
+
+  static String formatRemainingDuration(int seconds) {
+    final clamped = seconds < 0 ? 0 : seconds;
+    final hours = clamped ~/ 3600;
+    final minutes = (clamped % 3600) ~/ 60;
+    final secs = clamped % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+
+  String remainingTimeFormatted(DateTime now) =>
+      formatRemainingDuration(remainingSecondsAt(now));
+
+  String remainingTimeText(DateTime now) =>
+      'Remaining time: ${remainingTimeFormatted(now)}';
 }
 
 class Attendance {
@@ -145,6 +186,10 @@ class Attendance {
     this.totalBreakSeconds = 0,
     this.breaks = const [],
     this.status = 'PRESENT',
+    this.scheduledCheckIn,
+    this.scheduledCheckOut,
+    this.scheduleStatus,
+    this.scheduleConfigured,
   });
 
   final String id;
@@ -164,6 +209,10 @@ class Attendance {
   final int totalBreakSeconds;
   final List<AttendanceBreak> breaks;
   final String status;
+  final String? scheduledCheckIn;
+  final String? scheduledCheckOut;
+  final String? scheduleStatus;
+  final bool? scheduleConfigured;
 
   bool get isOnBreak => breakStartedAt != null || breaks.any((b) => b.isActive);
 
@@ -290,6 +339,27 @@ class Attendance {
     }
 
     final rawSchedule = json['scheduleSnapshot'] ?? json['schedule'];
+    final rawScheduledCheckIn = json['scheduledCheckIn']?.toString();
+    final rawScheduledCheckOut = json['scheduledCheckOut']?.toString();
+    final rawScheduleStatus = json['scheduleStatus']?.toString();
+    final rawScheduleConfigured = json['scheduleConfigured'] as bool?;
+
+    Map<String, dynamic>? resolvedScheduleSnapshot;
+    if (rawSchedule is Map) {
+      resolvedScheduleSnapshot = Map<String, dynamic>.from(rawSchedule);
+    } else if (rawScheduledCheckIn != null || rawScheduledCheckOut != null) {
+      resolvedScheduleSnapshot = {
+        if (rawScheduledCheckIn != null) 'scheduledCheckIn': rawScheduledCheckIn,
+        if (rawScheduledCheckOut != null)
+          'scheduledCheckOut': rawScheduledCheckOut,
+        if (json['scheduleTimeZone'] != null)
+          'timezone': json['scheduleTimeZone'],
+        if (json['timezone'] != null) 'timezone': json['timezone'],
+        if (json['gracePeriodMinutes'] != null)
+          'gracePeriodMinutes': json['gracePeriodMinutes'],
+      };
+    }
+
     final rawEmployee = json['employee'];
     final rawDepartment = json['department'] ??
         (rawEmployee is Map ? rawEmployee['department'] : null);
@@ -308,8 +378,7 @@ class Attendance {
       minutesLate: rawMinutesLate is num
           ? rawMinutesLate.toInt()
           : int.tryParse(rawMinutesLate?.toString() ?? ''),
-      scheduleSnapshot:
-          rawSchedule is Map ? Map<String, dynamic>.from(rawSchedule) : null,
+      scheduleSnapshot: resolvedScheduleSnapshot,
       department: rawDepartment is Map
           ? (rawDepartment['name'] ?? rawDepartment['_id'])?.toString()
           : rawDepartment?.toString(),
@@ -319,6 +388,16 @@ class Attendance {
       totalBreakSeconds: (json['totalBreakSeconds'] as num?)?.toInt() ?? 0,
       breaks: parsedBreaks,
       status: json['status']?.toString() ?? 'PRESENT',
+      scheduledCheckIn: rawScheduledCheckIn ??
+          resolvedScheduleSnapshot?['scheduledCheckIn']?.toString() ??
+          resolvedScheduleSnapshot?['checkInTime']?.toString(),
+      scheduledCheckOut: rawScheduledCheckOut ??
+          resolvedScheduleSnapshot?['scheduledCheckOut']?.toString() ??
+          resolvedScheduleSnapshot?['checkOutTime']?.toString(),
+      scheduleStatus: rawScheduleStatus ??
+          resolvedScheduleSnapshot?['scheduleStatus']?.toString(),
+      scheduleConfigured: rawScheduleConfigured ??
+          (resolvedScheduleSnapshot?['scheduleConfigured'] as bool?),
     );
   }
 
@@ -339,6 +418,11 @@ class Attendance {
         'breakStartedAt': breakStartedAt?.toIso8601String(),
         'totalBreakSeconds': totalBreakSeconds,
         'status': status,
+        if (scheduledCheckIn != null) 'scheduledCheckIn': scheduledCheckIn,
+        if (scheduledCheckOut != null) 'scheduledCheckOut': scheduledCheckOut,
+        if (scheduleStatus != null) 'scheduleStatus': scheduleStatus,
+        if (scheduleConfigured != null)
+          'scheduleConfigured': scheduleConfigured,
         'breaks': breaks
             .map((b) => {
                   'id': b.id,
@@ -370,6 +454,10 @@ class Attendance {
     int? totalBreakSeconds,
     List<AttendanceBreak>? breaks,
     String? status,
+    String? scheduledCheckIn,
+    String? scheduledCheckOut,
+    String? scheduleStatus,
+    bool? scheduleConfigured,
   }) {
     return Attendance(
       id: id ?? this.id,
@@ -390,8 +478,173 @@ class Attendance {
       totalBreakSeconds: totalBreakSeconds ?? this.totalBreakSeconds,
       breaks: breaks ?? this.breaks,
       status: status ?? this.status,
+      scheduledCheckIn: scheduledCheckIn ?? this.scheduledCheckIn,
+      scheduledCheckOut: scheduledCheckOut ?? this.scheduledCheckOut,
+      scheduleStatus: scheduleStatus ?? this.scheduleStatus,
+      scheduleConfigured: scheduleConfigured ?? this.scheduleConfigured,
     );
   }
+}
+
+/// Formats a 24-hour time string (e.g. '10:00', '18:00', '09:00', '9:00 AM') into standard 12-hour format with leading zero ('10:00 AM', '06:00 PM', '09:00 AM').
+String formatShiftTime(String timeStr) {
+  final trimmed = timeStr.trim();
+  if (trimmed.isEmpty) return '';
+  final upper = trimmed.toUpperCase();
+  if (upper.contains('AM') || upper.contains('PM')) {
+    final match = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', caseSensitive: false).firstMatch(trimmed);
+    if (match != null) {
+      final h = match.group(1)!.padLeft(2, '0');
+      final m = match.group(2)!;
+      final period = match.group(3)!.toUpperCase();
+      return '$h:$m $period';
+    }
+    return trimmed;
+  }
+  final match = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(trimmed);
+  if (match != null) {
+    final hour = int.parse(match.group(1)!);
+    final minute = int.parse(match.group(2)!);
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final h12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    return '${h12.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
+  }
+  return trimmed;
+}
+
+/// Formats start and end times into a shift range: '10:00 AM – 06:00 PM'.
+String formatShiftRange(String start, String end) {
+  final s = formatShiftTime(start);
+  final e = formatShiftTime(end);
+  if (s.isEmpty && e.isEmpty) return 'Not Scheduled';
+  if (s.isEmpty) return e;
+  if (e.isEmpty) return s;
+  return '$s \u2013 $e';
+}
+
+/// Normalizes any existing shift string (handling '-' or '–' separators and casing).
+String normalizeShiftRange(String text) {
+  final trimmed = text.trim();
+  if (trimmed.isEmpty ||
+      trimmed.toLowerCase() == 'not scheduled' ||
+      trimmed.toLowerCase() == 'unconfigured') {
+    return 'Not Scheduled';
+  }
+  const separators = ['\u2013', '\u2014', '-'];
+  for (final sep in separators) {
+    if (trimmed.contains(sep)) {
+      final parts = trimmed.split(sep);
+      if (parts.length == 2) {
+        final start = parts[0].trim();
+        final end = parts[1].trim();
+        if (start.isNotEmpty && end.isNotEmpty) {
+          return formatShiftRange(start, end);
+        }
+      }
+    }
+  }
+  return trimmed;
+}
+
+/// Extracts a formatted shift range from a schedule map.
+String? extractShiftFromMap(Map<String, dynamic> map) {
+  if (map['scheduleStatus']?.toString().toUpperCase() == 'UNCONFIGURED' ||
+      map['scheduleConfigured'] == false ||
+      map['configured'] == false) {
+    return 'Not Scheduled';
+  }
+  if (map['shift'] != null && map['shift'].toString().trim().isNotEmpty) {
+    return normalizeShiftRange(map['shift'].toString().trim());
+  }
+  if (map['shiftHours'] != null &&
+      map['shiftHours'].toString().trim().isNotEmpty) {
+    return normalizeShiftRange(map['shiftHours'].toString().trim());
+  }
+  final checkIn = (map['scheduledCheckIn'] ??
+          map['checkInTime'] ??
+          map['startTime'] ??
+          map['checkIn'])
+      ?.toString()
+      .trim();
+  final checkOut = (map['scheduledCheckOut'] ??
+          map['checkOutTime'] ??
+          map['endTime'] ??
+          map['checkOut'])
+      ?.toString()
+      .trim();
+  if (checkIn != null && checkIn.isNotEmpty) {
+    return formatShiftRange(
+        checkIn, checkOut?.isNotEmpty == true ? checkOut! : '18:00');
+  }
+  return null;
+}
+
+/// Resolves the effective shift for an authenticated staff member.
+/// Priority:
+/// 1. Unconfigured attendance flag -> 'Not Scheduled'
+/// 2. Employee-specific schedule override on [staff] (never inferred from department)
+/// 3. Backend attendance schedule snapshot or fields
+/// 4. Authenticated employee's department configured schedule:
+///    - Tech: '10:00 AM – 06:00 PM'
+///    - Telecalling: '09:00 AM – 06:00 PM'
+/// 5. Missing / unconfigured schedule -> 'Not Scheduled'
+String resolveEffectiveShift({
+  Staff? staff,
+  Attendance? attendance,
+  String? department,
+}) {
+  // 1. Check if backend attendance explicitly reports schedule as unconfigured
+  if (attendance != null) {
+    if (attendance.scheduleConfigured == false ||
+        attendance.scheduleStatus?.toUpperCase() == 'UNCONFIGURED') {
+      return 'Not Scheduled';
+    }
+  }
+
+  // 2. Employee-specific schedule override on Staff
+  if (staff != null) {
+    if (staff.shift != null && staff.shift!.trim().isNotEmpty) {
+      return normalizeShiftRange(staff.shift!.trim());
+    }
+    if (staff.schedule != null) {
+      final s = extractShiftFromMap(staff.schedule!);
+      if (s != null) return s;
+    }
+  }
+
+  // 3. Attendance schedule snapshot or fields from backend
+  if (attendance != null) {
+    if (attendance.scheduleSnapshot != null) {
+      final s = extractShiftFromMap(attendance.scheduleSnapshot!);
+      if (s != null) return s;
+    }
+    if (attendance.scheduledCheckIn != null &&
+        attendance.scheduledCheckIn!.trim().isNotEmpty) {
+      final inTime = attendance.scheduledCheckIn!.trim();
+      final outTime = attendance.scheduledCheckOut?.trim().isNotEmpty == true
+          ? attendance.scheduledCheckOut!.trim()
+          : '18:00';
+      return formatShiftRange(inTime, outTime);
+    }
+  }
+
+  // 4. Authenticated employee's actual department schedule
+  final effectiveDept = (staff?.department.trim().isNotEmpty == true
+          ? staff!.department
+          : (attendance?.department?.trim().isNotEmpty == true
+              ? attendance!.department!
+              : (department ?? '')))
+      .trim();
+
+  final deptLower = effectiveDept.toLowerCase();
+  if (deptLower == 'tech') {
+    return '10:00 AM \u2013 06:00 PM';
+  } else if (deptLower == 'telecalling') {
+    return '09:00 AM \u2013 06:00 PM';
+  }
+
+  // 5. If schedule is missing / unconfigured
+  return 'Not Scheduled';
 }
 
 /// A staff authentication event, kept separately from shift attendance.

@@ -388,6 +388,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
           repository: widget.repository,
           workMode: widget.workMode,
           workLocation: widget.workLocation,
+          staff: widget.staff,
           isLoadingAttendance: _isLoadingAttendance,
           isPunching: _isPunching,
           attendanceError: _attendanceError,
@@ -602,6 +603,7 @@ class _HomePage extends StatefulWidget {
       required this.repository,
       required this.workMode,
       required this.workLocation,
+      this.staff,
       this.isLoadingAttendance = false,
       this.isPunching = false,
       this.attendanceError,
@@ -619,6 +621,7 @@ class _HomePage extends StatefulWidget {
   final HRRepository repository;
   final String workMode;
   final String? workLocation;
+  final Staff? staff;
   final bool isLoadingAttendance;
   final bool isPunching;
   final String? attendanceError;
@@ -627,7 +630,7 @@ class _HomePage extends StatefulWidget {
   State<_HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<_HomePage> {
+class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
   // Daily update state
   bool _isLoadingUpdate = false;
   bool _breakActionInFlight = false;
@@ -637,6 +640,7 @@ class _HomePageState extends State<_HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _activeTimeTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {});
@@ -773,7 +777,15 @@ class _HomePageState extends State<_HomePage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _activeTimeTimer.cancel();
     widget.repository.dailyUpdatesList.removeListener(_onUpdatesChanged);
     widget.repository.leaveRequests.removeListener(_onLeavesChanged);
@@ -819,9 +831,11 @@ class _HomePageState extends State<_HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final shiftText = widget.department.toLowerCase() == 'tech'
-        ? '10:00 AM – 06:00 PM'
-        : '09:00 AM – 06:00 PM';
+    final shiftText = resolveEffectiveShift(
+      staff: widget.staff,
+      attendance: widget.attendance,
+      department: widget.department,
+    );
     final now = DateTime.now();
     final attendance = widget.attendance;
     final apiStatus = attendance?.status.trim();
@@ -996,7 +1010,14 @@ class _HomePageState extends State<_HomePage> {
                     if (activeBreak != null) ...[
                       const SizedBox(height: 8),
                       Text(
-                          '${AttendanceBreakSchedule.nameForType(activeBreak.breakType)} · Started ${TimeOfDay.fromDateTime(activeBreak.startTime).format(context)} · ${_formatShortDuration(activeBreak.durationAt(now))} elapsed',
+                          activeBreak.remainingTimeText(now),
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: _ink)),
+                      const SizedBox(height: 2),
+                      Text(
+                          '${AttendanceBreakSchedule.nameForType(activeBreak.breakType)} · Started ${TimeOfDay.fromDateTime(activeBreak.startTime).format(context)}',
                           style: TextStyle(fontSize: 12, color: _muted)),
                     ] else ...[
                       const SizedBox(height: 8),
