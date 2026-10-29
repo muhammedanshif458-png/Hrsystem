@@ -875,3 +875,187 @@ class DailyUpdate {
     );
   }
 }
+
+/// Normalizes department key to canonical identifier ('tech', 'telecalling', 'hr', etc.)
+/// matching the backend ChatService normalizeDeptKey logic.
+String canonicalDepartmentKey(String? dept) {
+  if (dept == null || dept.trim().isEmpty) return 'tech';
+  final key = dept.trim().toLowerCase();
+  if (key.contains('tech') || key.contains('engineer')) return 'tech';
+  if (key.contains('tele') || key.contains('call') || key.contains('client')) return 'telecalling';
+  if (key.contains('human') || key == 'hr') return 'hr';
+  return key.replaceAll(RegExp(r'\s+'), '-').replaceAll(RegExp(r'[^a-z0-9_-]'), '');
+}
+
+/// Canonical Chat message representation for department chat, matching
+/// backend DepartmentChatMessage model and HR-dashboard schema.
+class StaffChatMessage {
+  final String id;
+  final String senderId;
+  final String senderName;
+  final String senderRole;
+  final String? senderUser;
+  final String? senderEmployee;
+  final String departmentKey;
+  final String? clientMessageId;
+  final String receiverId;
+  final String text;
+  final DateTime timestamp;
+  final bool isRead;
+  final bool deletedForEveryone;
+  final Set<String> deletedByIds;
+
+  StaffChatMessage({
+    required this.id,
+    required this.senderId,
+    this.senderName = '',
+    this.senderRole = 'STAFF',
+    this.senderUser,
+    this.senderEmployee,
+    this.departmentKey = '',
+    this.clientMessageId,
+    this.receiverId = '',
+    required this.text,
+    required this.timestamp,
+    this.isRead = false,
+    this.deletedForEveryone = false,
+    Set<String>? deletedByIds,
+  }) : deletedByIds = deletedByIds ?? const {};
+
+  /// Whether the message sender is an HR or Admin role
+  bool get isHR {
+    final role = senderRole.toUpperCase();
+    return role == 'HR' ||
+        role == 'SUPER_ADMIN' ||
+        role == 'ADMIN' ||
+        role == 'HR MANAGER';
+  }
+
+  /// Whether this message was authored by the current logged-in [user]
+  bool isSentBy(Staff? user) {
+    if (user == null) return false;
+    if (senderId.isNotEmpty && senderId == user.id) return true;
+    if (senderEmployee != null && senderEmployee == user.id) return true;
+    if (senderUser != null && senderUser == user.id) return true;
+    if (!isHR &&
+        user.name.isNotEmpty &&
+        senderName.trim().toLowerCase() == user.name.trim().toLowerCase()) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Checks if message is deleted for everyone or specifically for [userId]
+  bool isHiddenFor(String? userId) {
+    if (deletedForEveryone) return true;
+    if (userId != null && deletedByIds.contains(userId)) return true;
+    return false;
+  }
+
+  /// 2-letter avatar initials
+  String get initials {
+    if (senderName.trim().isEmpty) return isHR ? 'HR' : 'ST';
+    final parts = senderName.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return parts[0].substring(0, parts[0].length.clamp(1, 2)).toUpperCase();
+  }
+
+  /// Formatted time string (e.g. 09:12 AM)
+  String get formattedTime {
+    final hour = timestamp.hour;
+    final minute = timestamp.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final standardHour = hour % 12 == 0 ? 12 : hour % 12;
+    final hourStr = standardHour.toString().padLeft(2, '0');
+    return '$hourStr:$minute $period';
+  }
+
+  StaffChatMessage copyWith({
+    String? id,
+    String? senderId,
+    String? senderName,
+    String? senderRole,
+    String? senderUser,
+    String? senderEmployee,
+    String? departmentKey,
+    String? clientMessageId,
+    String? receiverId,
+    String? text,
+    DateTime? timestamp,
+    bool? isRead,
+    bool? deletedForEveryone,
+    Set<String>? deletedByIds,
+  }) {
+    return StaffChatMessage(
+      id: id ?? this.id,
+      senderId: senderId ?? this.senderId,
+      senderName: senderName ?? this.senderName,
+      senderRole: senderRole ?? this.senderRole,
+      senderUser: senderUser ?? this.senderUser,
+      senderEmployee: senderEmployee ?? this.senderEmployee,
+      departmentKey: departmentKey ?? this.departmentKey,
+      clientMessageId: clientMessageId ?? this.clientMessageId,
+      receiverId: receiverId ?? this.receiverId,
+      text: text ?? this.text,
+      timestamp: timestamp ?? this.timestamp,
+      isRead: isRead ?? this.isRead,
+      deletedForEveryone: deletedForEveryone ?? this.deletedForEveryone,
+      deletedByIds: deletedByIds ?? this.deletedByIds,
+    );
+  }
+
+  factory StaffChatMessage.fromJson(Map<String, dynamic> json) {
+    Set<String> deletedBy = {};
+    final rawDeleted = json['deletedByIds'];
+    if (rawDeleted is List) {
+      deletedBy = rawDeleted.map((e) => e.toString()).toSet();
+    }
+
+    DateTime parsedTime;
+    if (json['timestamp'] != null) {
+      parsedTime =
+          DateTime.tryParse(json['timestamp'].toString()) ?? DateTime.now();
+    } else if (json['createdAt'] != null) {
+      parsedTime =
+          DateTime.tryParse(json['createdAt'].toString()) ?? DateTime.now();
+    } else {
+      parsedTime = DateTime.now();
+    }
+
+    return StaffChatMessage(
+      id: json['id']?.toString() ?? json['_id']?.toString() ?? '',
+      senderId: json['senderId']?.toString() ?? '',
+      senderName: json['senderName']?.toString() ?? '',
+      senderRole: json['senderRole']?.toString() ?? 'STAFF',
+      senderUser: json['senderUser']?.toString(),
+      senderEmployee: json['senderEmployee']?.toString(),
+      departmentKey: json['departmentKey']?.toString() ?? '',
+      clientMessageId: json['clientMessageId']?.toString(),
+      receiverId: json['receiverId']?.toString() ?? '',
+      text: json['text']?.toString() ?? json['message']?.toString() ?? '',
+      timestamp: parsedTime,
+      isRead: json['isRead'] == true,
+      deletedForEveryone: json['deletedForEveryone'] == true,
+      deletedByIds: deletedBy,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'senderId': senderId,
+        'senderName': senderName,
+        'senderRole': senderRole,
+        if (senderUser != null) 'senderUser': senderUser,
+        if (senderEmployee != null) 'senderEmployee': senderEmployee,
+        'departmentKey': departmentKey,
+        if (clientMessageId != null) 'clientMessageId': clientMessageId,
+        'receiverId': receiverId,
+        'text': text,
+        'timestamp': timestamp.toIso8601String(),
+        'isRead': isRead,
+        'deletedForEveryone': deletedForEveryone,
+        'deletedByIds': deletedByIds.toList(),
+      };
+}

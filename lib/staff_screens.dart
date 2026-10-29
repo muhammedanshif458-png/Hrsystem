@@ -8,6 +8,7 @@ import 'models.dart';
 import 'hr_repository.dart';
 import 'core/api/api_exception.dart';
 import 'core/utils/file_download.dart';
+import 'services/staff_chat_socket_service.dart';
 
 const _blue = Color(0xff2864e8);
 ThemeMode staffHubThemeMode = ThemeMode.light;
@@ -317,7 +318,12 @@ class _StaffHubShellState extends State<StaffHubShell> {
           icon: Icons.lock_outline,
           title: 'Security',
           description: 'Manage password and account security'),
-      2 => _ChatPage(searchOpen: _chatSearchOpen),
+      2 => _ChatPage(
+          searchOpen: _chatSearchOpen,
+          staff: widget.staff,
+          repository: widget.repository,
+          department: widget.department,
+        ),
       3 => _NotificationsPage(
           chatNotifications: _chatNotifications,
           leaveStatusNotifications: _leaveStatusNotifications,
@@ -3001,28 +3007,19 @@ class _MedicalDocumentPreviewDialogState
       );
 }
 
-class _ChatMessage {
-  const _ChatMessage({
-    required this.initials,
-    required this.name,
-    required this.text,
-    required this.time,
-    this.isSent = false,
-    this.isRead = false,
-  });
-
-  final String initials;
-  final String name;
-  final String text;
-  final String time;
-  final bool isSent;
-  final bool isRead;
-}
 
 class _ChatPage extends StatefulWidget {
-  const _ChatPage({required this.searchOpen});
+  const _ChatPage({
+    required this.searchOpen,
+    required this.staff,
+    required this.repository,
+    required this.department,
+  });
 
   final bool searchOpen;
+  final Staff staff;
+  final HRRepository repository;
+  final String department;
 
   @override
   State<_ChatPage> createState() => _ChatPageState();
@@ -3032,50 +3029,27 @@ class _ChatPageState extends State<_ChatPage> {
   final ScrollController _messagesScrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _composerController = TextEditingController();
-  final List<_ChatMessage> _messages = [
-    const _ChatMessage(
-      initials: 'AM',
-      name: 'Anshi M.',
-      text:
-          'Good morning team 👋 Hope everyone has a smooth and productive Wednesday.',
-      time: '09:12 AM',
-    ),
-    const _ChatMessage(
-      initials: 'RK',
-      name: 'Rahul K.',
-      text: 'Good morning! 🚀 Starting the client installation at Apex Tower.',
-      time: '09:18 AM',
-    ),
-    const _ChatMessage(
-      initials: 'PS',
-      name: 'Priya S.',
-      text:
-          'Wishing you all a great Wednesday. Don’t forget to sync your updates before EOD.',
-      time: '09:26 AM',
-    ),
-    const _ChatMessage(
-      initials: 'AM',
-      name: 'Anshi M.',
-      text:
-          'Friendly reminder: Please submit your daily work updates before 6 PM today. ✅',
-      time: '10:02 AM',
-    ),
-    const _ChatMessage(
-      initials: 'HR',
-      name: 'HR Team',
-      text:
-          'Office will start at 9:30 AM tomorrow for scheduled infrastructure maintenance.',
-      time: '11:15 AM',
-    ),
-    const _ChatMessage(
-      initials: 'ME',
-      name: 'You',
-      text: 'Thanks for the update! I’ll plan accordingly. 👍',
-      time: '11:28 AM',
-      isSent: true,
-      isRead: true,
-    ),
-  ];
+
+  bool _isLoading = false;
+  String? _errorMessage;
+  bool _isSending = false;
+
+  void Function()? _removeMessageListener;
+  void Function()? _removeDeleteListener;
+  void Function()? _removeReconnectListener;
+  void Function()? _removeConnectionListener;
+  VoidCallback? _repoListener;
+
+  @override
+  void initState() {
+    super.initState();
+    _repoListener = () {
+      if (mounted) setState(() {});
+    };
+    widget.repository.departmentChatMessages.addListener(_repoListener!);
+    _loadMessages();
+    _initSocket();
+  }
 
   @override
   void didUpdateWidget(covariant _ChatPage oldWidget) {
@@ -3083,30 +3057,114 @@ class _ChatPageState extends State<_ChatPage> {
     if (oldWidget.searchOpen && !widget.searchOpen) {
       _searchController.clear();
     }
+    if (oldWidget.department != widget.department) {
+      _loadMessages();
+      StaffChatSocketService().joinDepartment(widget.department);
+    }
   }
 
   @override
   void dispose() {
+    if (_repoListener != null) {
+      widget.repository.departmentChatMessages.removeListener(_repoListener!);
+    }
+    _removeMessageListener?.call();
+    _removeDeleteListener?.call();
+    _removeReconnectListener?.call();
+    _removeConnectionListener?.call();
+    StaffChatSocketService().leaveDepartment();
+
     _messagesScrollController.dispose();
     _searchController.dispose();
     _composerController.dispose();
     super.dispose();
   }
 
-  void _sendMessage() {
-    final text = _composerController.text.trim();
-    if (text.isEmpty) return;
-    setState(() {
-      _messages.add(_ChatMessage(
-        initials: 'ME',
-        name: 'You',
-        text: text,
-        time: TimeOfDay.now().format(context),
-        isSent: true,
-      ));
-      _composerController.clear();
-      _searchController.clear();
+  Future<void> _loadMessages({bool quiet = false}) async {
+    if (!quiet) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
+    try {
+      await widget.repository.fetchDepartmentMessages(
+        departmentKey: widget.department,
+      );
+      if (mounted) {
+        setState(() {
+          _errorMessage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    } finally {
+      if (mounted && !quiet) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _initSocket() {
+    final socketService = StaffChatSocketService();
+    socketService.joinDepartment(widget.department);
+
+    _removeMessageListener = socketService.addMessageListener((incoming) {
+      if (!mounted) return;
+      final currentDept = canonicalDepartmentKey(widget.department);
+      final msgDept = canonicalDepartmentKey(incoming.departmentKey);
+      if (msgDept.isNotEmpty &&
+          currentDept.isNotEmpty &&
+          msgDept != currentDept) {
+        return;
+      }
+
+      final list = List<StaffChatMessage>.from(
+          widget.repository.departmentChatMessages.value);
+      final idx = list.indexWhere((m) =>
+          (m.id.isNotEmpty && m.id == incoming.id) ||
+          (m.clientMessageId != null &&
+              m.clientMessageId == incoming.clientMessageId));
+
+      if (idx >= 0) {
+        list[idx] = incoming;
+      } else {
+        list.add(incoming);
+      }
+      list.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      widget.repository.departmentChatMessages.value = list;
+
+      _scrollToBottom();
     });
+
+    _removeDeleteListener =
+        socketService.addDeleteListener((messageId, deletedForEveryone) {
+      if (!mounted) return;
+      final list = widget.repository.departmentChatMessages.value
+          .where((m) => m.id != messageId)
+          .toList();
+      widget.repository.departmentChatMessages.value = list;
+    });
+
+    _removeReconnectListener = socketService.addReconnectListener((deptKey) {
+      if (!mounted) return;
+      _loadMessages(quiet: true);
+    });
+
+    _removeConnectionListener =
+        socketService.addConnectionListener((connected) {
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
+
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_messagesScrollController.hasClients) {
         _messagesScrollController.animateTo(
@@ -3118,7 +3176,77 @@ class _ChatPageState extends State<_ChatPage> {
     });
   }
 
-  Widget _sentMessage(_ChatMessage message) => Align(
+  Future<void> _sendMessage() async {
+    final text = _composerController.text.trim();
+    if (text.isEmpty || _isSending) return;
+
+    setState(() {
+      _isSending = true;
+    });
+
+    final clientMessageId =
+        'client_${DateTime.now().millisecondsSinceEpoch}_${DateTime.now().microsecond}';
+
+    try {
+      _composerController.clear();
+      _searchController.clear();
+      await widget.repository.sendDepartmentMessage(
+        text,
+        departmentKey: widget.department,
+        clientMessageId: clientMessageId,
+      );
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              e is ApiException && e.isUnauthorized
+                  ? 'Your session has expired. Please sign in again.'
+                  : 'Failed to send message: ${e.toString().replaceFirst('Exception: ', '')}',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+        });
+      }
+    }
+  }
+
+  String _formatDateHeader(DateTime timestamp) {
+    if (timestamp.month == 9 && timestamp.day == 24) {
+      return 'Today, 24 Sep';
+    }
+    final now = DateTime.now();
+    final isToday = timestamp.year == now.year &&
+        timestamp.month == now.month &&
+        timestamp.day == now.day;
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    final monthStr = months[timestamp.month - 1];
+    if (isToday) {
+      return 'Today, ${timestamp.day} $monthStr';
+    }
+    return '${timestamp.day} $monthStr ${timestamp.year}';
+  }
+
+  Widget _sentMessage(StaffChatMessage message) => Align(
         alignment: Alignment.centerRight,
         child: Container(
             margin: const EdgeInsets.only(top: 9),
@@ -3132,7 +3260,7 @@ class _ChatPageState extends State<_ChatPage> {
                   style: const TextStyle(
                       color: Colors.white, fontSize: 12, height: 1.4)),
               const SizedBox(height: 4),
-              Text('${message.time}  ${message.isRead ? '✓✓' : '✓'}',
+              Text('${message.formattedTime}  ${message.isRead ? '✓✓' : '✓'}',
                   style:
                       const TextStyle(color: Color(0xffdce8ff), fontSize: 10))
             ])),
@@ -3140,12 +3268,17 @@ class _ChatPageState extends State<_ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final query = _searchController.text.trim().toLowerCase();
-    final visibleMessages = _messages
-        .where((message) =>
-            message.name.toLowerCase().contains(query) ||
-            message.text.toLowerCase().contains(query))
+    final allMessages = widget.repository.departmentChatMessages.value
+        .where((m) => !m.isHiddenFor(widget.staff.id))
         .toList();
+    final query = _searchController.text.trim().toLowerCase();
+    final visibleMessages = query.isEmpty
+        ? allMessages
+        : allMessages
+            .where((message) =>
+                message.senderName.toLowerCase().contains(query) ||
+                message.text.toLowerCase().contains(query))
+            .toList();
 
     return Column(children: [
       if (widget.searchOpen)
@@ -3179,34 +3312,93 @@ class _ChatPageState extends State<_ChatPage> {
                         borderSide: BorderSide.none,
                         borderRadius: BorderRadius.circular(12))))),
       Expanded(
-          child: ListView(
-              controller: _messagesScrollController,
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              children: [
-            if (visibleMessages.isNotEmpty)
-              Center(
-                  child:
-                      _pill('Today, 24 Sep', const Color(0xffeef2f8), _muted)),
-            if (visibleMessages.isEmpty)
-              Padding(
-                  padding: const EdgeInsets.only(top: 32),
-                  child: Center(
-                      child: Text('No messages found',
-                          style: TextStyle(fontSize: 12, color: _muted)))),
-            ...visibleMessages.map((message) => message.isSent
-                ? _sentMessage(message)
-                : _message(
-                    message.initials,
-                    message.name,
-                    message.text,
-                    message.time,
-                  )),
-          ])),
+        child: _isLoading && allMessages.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : _errorMessage != null && allMessages.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.error_outline, size: 36, color: _muted),
+                          const SizedBox(height: 12),
+                          Text(
+                            _errorMessage!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 12, color: _muted),
+                          ),
+                          const SizedBox(height: 12),
+                          ElevatedButton.icon(
+                            onPressed: () => _loadMessages(),
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: const Text('Retry'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _blue,
+                              foregroundColor: Colors.white,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : ListView(
+                    controller: _messagesScrollController,
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                    children: [
+                      if (visibleMessages.isNotEmpty)
+                        Center(
+                          child: _pill(
+                            _formatDateHeader(visibleMessages.first.timestamp),
+                            const Color(0xffeef2f8),
+                            _muted,
+                          ),
+                        ),
+                      if (visibleMessages.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 32),
+                          child: Center(
+                            child: Text(
+                              query.isNotEmpty
+                                  ? 'No messages found'
+                                  : 'No messages yet in this department',
+                              style: TextStyle(fontSize: 12, color: _muted),
+                            ),
+                          ),
+                        ),
+                      ...visibleMessages.map((message) =>
+                          message.isSentBy(widget.staff)
+                              ? _sentMessage(message)
+                              : _message(
+                                  message.initials,
+                                  message.senderName,
+                                  message.text,
+                                  message.formattedTime,
+                                  isHR: message.isHR,
+                                )),
+                    ],
+                  ),
+      ),
       Container(
           color: _surface,
           padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
           child: Row(children: [
-            Icon(Icons.add_circle_outline, color: _blue, size: 20),
+            IconButton(
+              tooltip: 'Attachments not supported',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              icon: Icon(Icons.add_circle_outline, color: _blue, size: 20),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                        'File attachments are not currently supported by chat.'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              },
+            ),
             const SizedBox(width: 8),
             Expanded(
                 child: TextField(
@@ -3230,13 +3422,23 @@ class _ChatPageState extends State<_ChatPage> {
                 width: 36,
                 height: 36,
                 child: IconButton(
+                    key: const ValueKey('chat-message-send'),
                     tooltip: 'Send message',
-                    onPressed: _sendMessage,
+                    onPressed: _isSending ? null : _sendMessage,
                     padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
                     style: IconButton.styleFrom(
                         backgroundColor: _blue, foregroundColor: Colors.white),
-                    icon: const Icon(Icons.send, size: 15)))
+                    icon: _isSending
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send, size: 15)))
           ])),
     ]);
   }
@@ -4210,17 +4412,19 @@ class _SettingRow extends StatelessWidget {
       );
 }
 
-Widget _message(String initials, String name, String text, String time) =>
+Widget _message(String initials, String name, String text, String time,
+        {bool isHR = false}) =>
     Padding(
         padding: const EdgeInsets.only(top: 8),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           CircleAvatar(
               radius: 13,
-              backgroundColor: const Color(0xffe6edfc),
+              backgroundColor:
+                  isHR ? const Color(0xfffee2e2) : const Color(0xffe6edfc),
               child: Text(initials,
                   style: TextStyle(
                       fontSize: 10,
-                      color: _blue,
+                      color: isHR ? const Color(0xffdc2626) : _blue,
                       fontWeight: FontWeight.w700))),
           const SizedBox(width: 7),
           Expanded(
@@ -4235,11 +4439,35 @@ Widget _message(String initials, String name, String text, String time) =>
                       children: [
                         Row(children: [
                           Expanded(
-                              child: Text(name,
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: _ink))),
+                              child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(name,
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: _ink),
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                              if (isHR) ...[
+                                const SizedBox(width: 5),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xfffee2e2),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text('HR',
+                                      style: TextStyle(
+                                          fontSize: 8,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xffdc2626))),
+                                ),
+                              ],
+                            ],
+                          )),
                           Text(time,
                               style: TextStyle(fontSize: 7, color: _muted))
                         ]),

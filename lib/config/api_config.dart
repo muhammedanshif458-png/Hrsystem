@@ -25,6 +25,15 @@ class ApiConfig {
   /// Get the active API base URL
   static String get baseUrl => _overrideUrl ?? normalizeBaseUrl(_defaultUrl);
 
+  /// Get the active Socket.IO server URL (derived by stripping /api from baseUrl)
+  static String get socketUrl {
+    final base = baseUrl;
+    if (base.endsWith('/api')) {
+      return base.substring(0, base.length - 4);
+    }
+    return base;
+  }
+
   /// Normalizes base URL: strips trailing slashes, ensures /api suffix
   static String normalizeBaseUrl(String url) {
     var trimmed = url.trim();
@@ -81,5 +90,11 @@ class ApiConfig {
 
   // ── DAILY UPDATE ENDPOINTS ────────────────────────────────────────────────
   static const String dailyUpdates = '/staff/daily-updates';
+
+  // ── CHAT ENDPOINTS ────────────────────────────────────────────────────────
+  static const String staffChatMessages = '/staff/chat/messages';
+  static String staffDepartmentMessages(String deptKey) => '/staff/departments/$deptKey/messages';
+  static String staffChatMessageDelete(String messageId) => '/staff/chat/messages/$messageId';
+  static String staffChatMessageDeleteForMe(String messageId) => '/staff/chat/messages/$messageId/delete-for-me';
 }
 

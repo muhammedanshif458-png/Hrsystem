@@ -21,6 +21,58 @@ class MockHRRepository implements HRRepository {
   final resignationRequests = ValueNotifier<List<ResignationRequest>>([]);
   @override
   final isFirebaseConnected = ValueNotifier<bool>(true);
+  @override
+  final departmentChatMessages = ValueNotifier<List<StaffChatMessage>>([
+    StaffChatMessage(
+      id: 'mock_chat_1',
+      senderId: 'staff_anshi',
+      senderName: 'Anshi M.',
+      senderRole: 'STAFF',
+      text:
+          'Good morning team 👋 Hope everyone has a smooth and productive Wednesday.',
+      timestamp: DateTime(2026, 9, 24, 9, 12),
+      isRead: true,
+    ),
+    StaffChatMessage(
+      id: 'mock_chat_2',
+      senderId: 'staff_rahul',
+      senderName: 'Rahul K.',
+      senderRole: 'STAFF',
+      text: 'Good morning! 🚀 Starting the client installation at Apex Tower.',
+      timestamp: DateTime(2026, 9, 24, 9, 18),
+      isRead: true,
+    ),
+    StaffChatMessage(
+      id: 'mock_chat_3',
+      senderId: 'staff_priya',
+      senderName: 'Priya S.',
+      senderRole: 'STAFF',
+      text:
+          'Wishing you all a great Wednesday. Don’t forget to sync your updates before EOD.',
+      timestamp: DateTime(2026, 9, 24, 9, 26),
+      isRead: true,
+    ),
+    StaffChatMessage(
+      id: 'mock_chat_4',
+      senderId: 'staff_anshi',
+      senderName: 'Anshi M.',
+      senderRole: 'STAFF',
+      text:
+          'Friendly reminder: Please submit your daily work updates before 6 PM today. ✅',
+      timestamp: DateTime(2026, 9, 24, 10, 2),
+      isRead: true,
+    ),
+    StaffChatMessage(
+      id: 'mock_chat_5',
+      senderId: 'hr_admin',
+      senderName: 'HR Team',
+      senderRole: 'HR',
+      text:
+          'Office will start at 9:30 AM tomorrow for scheduled infrastructure maintenance.',
+      timestamp: DateTime(2026, 9, 24, 11, 15),
+      isRead: true,
+    ),
+  ]);
 
   @override
   Future<Staff> signIn(String email, String password) async {
@@ -234,5 +286,49 @@ class MockHRRepository implements HRRepository {
     );
     dailyUpdatesList.value = [update, ...dailyUpdatesList.value];
     return update;
+  }
+
+  @override
+  Future<List<StaffChatMessage>> fetchDepartmentMessages({
+    String? departmentKey,
+    int page = 1,
+    int limit = 50,
+  }) async {
+    return departmentChatMessages.value;
+  }
+
+  @override
+  Future<StaffChatMessage> sendDepartmentMessage(
+    String text, {
+    String? departmentKey,
+    String? clientMessageId,
+  }) async {
+    final sender = currentUser.value;
+    final message = StaffChatMessage(
+      id: 'mock_msg_${DateTime.now().millisecondsSinceEpoch}',
+      senderId: sender?.id ?? 'staff_chat_test',
+      senderName:
+          sender?.name.isNotEmpty == true ? sender!.name : 'Staff Member',
+      senderRole: 'STAFF',
+      departmentKey: departmentKey ?? 'tech',
+      clientMessageId: clientMessageId,
+      text: text,
+      timestamp: DateTime.now(),
+      isRead: false,
+    );
+    departmentChatMessages.value = [...departmentChatMessages.value, message];
+    return message;
+  }
+
+  @override
+  Future<void> deleteDepartmentMessageForMe(String messageId) async {
+    departmentChatMessages.value =
+        departmentChatMessages.value.where((m) => m.id != messageId).toList();
+  }
+
+  @override
+  Future<void> deleteDepartmentMessageForEveryone(String messageId) async {
+    departmentChatMessages.value =
+        departmentChatMessages.value.where((m) => m.id != messageId).toList();
   }
 }

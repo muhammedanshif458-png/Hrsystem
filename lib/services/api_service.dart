@@ -174,6 +174,19 @@ class ApiService {
     }
   }
 
+  // ── PATCH ──────────────────────────────────────────────────────────────────
+  Future<dynamic> patch(
+    String endpoint, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final response = await _dio.patch(_buildUrl(endpoint), data: body);
+      return _handleResponse(response);
+    } on DioException catch (e) {
+      throw _mapDioError(e);
+    }
+  }
+
   // ── DELETE ─────────────────────────────────────────────────────────────────
   Future<dynamic> delete(
     String endpoint, {

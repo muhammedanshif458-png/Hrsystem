@@ -84,6 +84,30 @@ abstract class HRRepository {
   /// Submit a new daily update for this staff member.
   /// [title] and [text] are validated before sending.
   Future<DailyUpdate> submitDailyUpdate(String title, String text);
+
+  /// Real-time department chat messages stream / value notifier
+  ValueNotifier<List<StaffChatMessage>> get departmentChatMessages;
+
+  /// Fetch department messages for the authenticated staff member's department
+  /// or explicitly for [departmentKey] if provided.
+  Future<List<StaffChatMessage>> fetchDepartmentMessages({
+    String? departmentKey,
+    int page = 1,
+    int limit = 50,
+  });
+
+  /// Send a message from the authenticated staff member to their department conversation.
+  Future<StaffChatMessage> sendDepartmentMessage(
+    String text, {
+    String? departmentKey,
+    String? clientMessageId,
+  });
+
+  /// Delete a message for the local user only
+  Future<void> deleteDepartmentMessageForMe(String messageId);
+
+  /// Delete a message for everyone (if authorized)
+  Future<void> deleteDepartmentMessageForEveryone(String messageId);
 }
 
 // ─── Implementation ───────────────────────────────────────────────────────────
@@ -115,6 +139,8 @@ class HRRepositoryImpl implements HRRepository {
   final resignationRequests = ValueNotifier<List<ResignationRequest>>([]);
   @override
   final isFirebaseConnected = ValueNotifier<bool>(false);
+  @override
+  final departmentChatMessages = ValueNotifier<List<StaffChatMessage>>([]);
   void _seedInitialData() {
     final today = DateTimeUtils.getTodayIsoDate();
 
@@ -1091,6 +1117,159 @@ class HRRepositoryImpl implements HRRepository {
     }
   }
 
+  @override
+  Future<List<StaffChatMessage>> fetchDepartmentMessages({
+    String? departmentKey,
+    int page = 1,
+    int limit = 50,
+  }) async {
+    try {
+      final endpoint = departmentKey != null && departmentKey.isNotEmpty
+          ? ApiConfig.staffDepartmentMessages(
+              canonicalDepartmentKey(departmentKey))
+          : ApiConfig.staffChatMessages;
+      final response = await _api.get(
+        endpoint,
+        queryParams: {'page': page, 'limit': limit},
+      );
+
+      dynamic rawData = response;
+      if (response is Map<String, dynamic> && response.containsKey('data')) {
+        rawData = response['data'];
+      }
+
+      final List<StaffChatMessage> messages = [];
+      if (rawData is List) {
+        for (final item in rawData) {
+          if (item is Map) {
+            messages.add(
+              StaffChatMessage.fromJson(Map<String, dynamic>.from(item)),
+            );
+          }
+        }
+      }
+
+      // Sort chronological (oldest to newest)
+      messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+      // Reconcile with existing messages to avoid dropping in-flight socket messages
+      final existingMap = {
+        for (final m in departmentChatMessages.value)
+          if (m.id.isNotEmpty) m.id: m
+      };
+      for (final m in messages) {
+        if (m.id.isNotEmpty) {
+          existingMap[m.id] = m;
+        }
+      }
+      final merged = existingMap.values.toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+      departmentChatMessages.value = merged;
+      return merged;
+    } on ApiException catch (e) {
+      debugPrint('fetchDepartmentMessages ApiException: $e');
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchDepartmentMessages error: $e');
+      if (e is Exception) rethrow;
+      throw Exception(e.toString());
+    }
+  }
+
+  @override
+  Future<StaffChatMessage> sendDepartmentMessage(
+    String text, {
+    String? departmentKey,
+    String? clientMessageId,
+  }) async {
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) {
+      throw Exception('Message cannot be empty');
+    }
+
+    final effectiveClientMessageId = clientMessageId ??
+        'client_${DateTime.now().millisecondsSinceEpoch}';
+
+    try {
+      final endpoint = departmentKey != null && departmentKey.isNotEmpty
+          ? ApiConfig.staffDepartmentMessages(
+              canonicalDepartmentKey(departmentKey))
+          : ApiConfig.staffChatMessages;
+
+      final body = <String, dynamic>{
+        'text': trimmedText,
+        'clientMessageId': effectiveClientMessageId,
+      };
+
+      final response = await _api.post(endpoint, body: body);
+
+      dynamic rawData = response;
+      if (response is Map<String, dynamic> && response.containsKey('data')) {
+        rawData = response['data'];
+      }
+
+      if (rawData is! Map) {
+        throw Exception('Invalid message response received from backend');
+      }
+
+      final savedMessage = StaffChatMessage.fromJson(
+        Map<String, dynamic>.from(rawData),
+      );
+
+      // Reconcile local departmentChatMessages
+      final currentList =
+          List<StaffChatMessage>.from(departmentChatMessages.value);
+      final existingIndex = currentList.indexWhere((m) =>
+          (m.id.isNotEmpty && m.id == savedMessage.id) ||
+          (m.clientMessageId != null &&
+              m.clientMessageId == savedMessage.clientMessageId));
+
+      if (existingIndex >= 0) {
+        currentList[existingIndex] = savedMessage;
+      } else {
+        currentList.add(savedMessage);
+      }
+      currentList.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      departmentChatMessages.value = currentList;
+
+      return savedMessage;
+    } on ApiException catch (e) {
+      debugPrint('sendDepartmentMessage ApiException: $e');
+      rethrow;
+    } catch (e) {
+      debugPrint('sendDepartmentMessage error: $e');
+      if (e is Exception) rethrow;
+      throw Exception(e.toString());
+    }
+  }
+
+  @override
+  Future<void> deleteDepartmentMessageForMe(String messageId) async {
+    try {
+      await _api.patch(ApiConfig.staffChatMessageDeleteForMe(messageId));
+      departmentChatMessages.value = departmentChatMessages.value
+          .where((m) => m.id != messageId)
+          .toList();
+    } catch (e) {
+      debugPrint('deleteDepartmentMessageForMe error: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> deleteDepartmentMessageForEveryone(String messageId) async {
+    try {
+      await _api.delete(ApiConfig.staffChatMessageDelete(messageId));
+      departmentChatMessages.value = departmentChatMessages.value
+          .where((m) => m.id != messageId)
+          .toList();
+    } catch (e) {
+      debugPrint('deleteDepartmentMessageForEveryone error: $e');
+      rethrow;
+    }
+  }
+
   void dispose() {
     currentUser.dispose();
     staffList.dispose();
@@ -1101,5 +1280,6 @@ class HRRepositoryImpl implements HRRepository {
     leaveRequests.dispose();
     resignationRequests.dispose();
     isFirebaseConnected.dispose();
+    departmentChatMessages.dispose();
   }
 }
