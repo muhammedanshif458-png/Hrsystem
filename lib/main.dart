@@ -56,6 +56,7 @@ class _AppPagesState extends State<_AppPages> {
   Widget build(BuildContext context) {
     if (!_departmentSelected) {
       return StaffDepartmentScreen(
+        selectedDepartment: _selectedDepartment,
         onSelect: (department) => setState(() {
           _selectedDepartment = department;
           _departmentSelected = true;
@@ -65,6 +66,9 @@ class _AppPagesState extends State<_AppPages> {
     if (!_loggedIn) {
       return StaffLoginPage(
         selectedDepartment: _selectedDepartment!,
+        onBack: () => setState(() {
+          _departmentSelected = false;
+        }),
         onSignIn: (email, password, workMode, location) async {
           final staff = await _repository.signIn(email, password);
           if (staff.role != Role.staff) {

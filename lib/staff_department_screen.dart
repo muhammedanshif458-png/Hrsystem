@@ -5,9 +5,14 @@ const _departmentInk = Color(0xff1b2638);
 const _departmentMuted = Color(0xff77849a);
 
 class StaffDepartmentScreen extends StatelessWidget {
-  const StaffDepartmentScreen({super.key, required this.onSelect});
+  const StaffDepartmentScreen({
+    super.key,
+    required this.onSelect,
+    this.selectedDepartment,
+  });
 
   final ValueChanged<String> onSelect;
+  final String? selectedDepartment;
 
   @override
   Widget build(BuildContext context) => Scaffold(

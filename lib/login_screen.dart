@@ -11,11 +11,16 @@ const _ink = Color(0xff1b2638);
 const _muted = Color(0xff77849a);
 
 class StaffLoginPage extends StatefulWidget {
-  const StaffLoginPage(
-      {super.key, required this.selectedDepartment, required this.onSignIn});
+  const StaffLoginPage({
+    super.key,
+    required this.selectedDepartment,
+    required this.onSignIn,
+    this.onBack,
+  });
   final String selectedDepartment;
   final Future<void> Function(String email, String password, String workMode,
       LocationCapture? location) onSignIn;
+  final VoidCallback? onBack;
 
   @override
   State<StaffLoginPage> createState() => _StaffLoginPageState();
@@ -24,7 +29,6 @@ class StaffLoginPage extends StatefulWidget {
 class _StaffLoginPageState extends State<StaffLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  bool _remember = true;
   bool _hidePassword = true;
   bool _busy = false;
   bool _locating = false;
@@ -32,6 +36,14 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
   String _workMode = 'Office';
   String? _locationError;
   LocationCapture? _location;
+
+  void _handleBack() {
+    if (widget.onBack != null) {
+      widget.onBack!();
+    } else if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
+  }
 
   @override
   void dispose() {
@@ -140,17 +152,34 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(22),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 390),
-              child: Column(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _handleBack();
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 390),
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        key: const ValueKey('sign-in-back-button'),
+                        tooltip: 'Back',
+                        icon: const Icon(Icons.arrow_back, color: _ink),
+                        alignment: Alignment.centerLeft,
+                        padding: EdgeInsets.zero,
+                        onPressed: _handleBack,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     Center(
                         child: Container(
                             width: 48,
@@ -186,7 +215,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                     const Center(
                         child: Text('Sign in to continue to your workspace',
                             style: TextStyle(fontSize: 14, color: _muted))),
-                    const SizedBox(height: 22),
+                    const SizedBox(height: 20),
                     _label('Work Mode'),
                     const SizedBox(height: 7),
                     Row(children: [
@@ -207,7 +236,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                     const SizedBox(height: 6),
                     _input(_emailController,
                         icon: Icons.mail_outline,
-                        hint: 'name@company.com',
+                        hint: 'Enter your email',
                         keyboardType: TextInputType.emailAddress),
                     const SizedBox(height: 14),
                     _label('Password'),
@@ -216,7 +245,8 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                       controller: _passwordController,
                       obscureText: _hidePassword,
                       decoration: _decoration(
-                              icon: Icons.lock_outline, hint: 'Password')
+                              icon: Icons.lock_outline,
+                              hint: 'Enter your password')
                           .copyWith(
                         suffixIcon: IconButton(
                             icon: Icon(
@@ -228,27 +258,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                                 setState(() => _hidePassword = !_hidePassword)),
                       ),
                     ),
-                    Wrap(
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Row(mainAxisSize: MainAxisSize.min, children: [
-                            Checkbox(
-                                value: _remember,
-                                onChanged: (v) =>
-                                    setState(() => _remember = v ?? false),
-                                visualDensity: VisualDensity.compact,
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap),
-                            const Text('Remember me',
-                                style: TextStyle(fontSize: 14, color: _muted))
-                          ]),
-                          TextButton(
-                              onPressed: () {},
-                              child: const Text('Forgot Password?',
-                                  style:
-                                      TextStyle(fontSize: 14, color: _blue))),
-                        ]),
+                    const SizedBox(height: 22),
                     SizedBox(
                         width: double.infinity,
                         height: 50,
@@ -278,28 +288,14 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10))),
                         )),
-                    const SizedBox(height: 12),
-                    Center(
-                        child: OutlinedButton.icon(
-                            onPressed: () {},
-                            icon: const Icon(Icons.face_retouching_natural,
-                                size: 14),
-                            label: const Text('Sign in with Face ID / Touch ID',
-                                style: TextStyle(fontSize: 14)),
-                            style: OutlinedButton.styleFrom(
-                                foregroundColor: _muted,
-                                side: BorderSide.none))),
-                    const SizedBox(height: 5),
-                    const Center(
-                        child: Text(
-                            '🛡  Protected by Enterprise SSO & Biometrics',
-                            style: TextStyle(fontSize: 11, color: _muted))),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 24),
                     const Center(
                         child: Text(
                             'StaffHub Systems Inc. • Internal Access Only',
                             style: TextStyle(fontSize: 11, color: _muted))),
-                  ]),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
