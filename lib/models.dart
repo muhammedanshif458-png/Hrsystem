@@ -349,7 +349,8 @@ class Attendance {
       resolvedScheduleSnapshot = Map<String, dynamic>.from(rawSchedule);
     } else if (rawScheduledCheckIn != null || rawScheduledCheckOut != null) {
       resolvedScheduleSnapshot = {
-        if (rawScheduledCheckIn != null) 'scheduledCheckIn': rawScheduledCheckIn,
+        if (rawScheduledCheckIn != null)
+          'scheduledCheckIn': rawScheduledCheckIn,
         if (rawScheduledCheckOut != null)
           'scheduledCheckOut': rawScheduledCheckOut,
         if (json['scheduleTimeZone'] != null)
@@ -492,7 +493,8 @@ String formatShiftTime(String timeStr) {
   if (trimmed.isEmpty) return '';
   final upper = trimmed.toUpperCase();
   if (upper.contains('AM') || upper.contains('PM')) {
-    final match = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', caseSensitive: false).firstMatch(trimmed);
+    final match = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', caseSensitive: false)
+        .firstMatch(trimmed);
     if (match != null) {
       final h = match.group(1)!.padLeft(2, '0');
       final m = match.group(2)!;
@@ -671,10 +673,17 @@ class StaffSignInRecord {
 }
 
 class LocationCapture {
-  const LocationCapture(
-      {required this.latitude, required this.longitude, required this.address});
+  const LocationCapture({
+    required this.latitude,
+    required this.longitude,
+    required this.accuracy,
+    required this.capturedAt,
+    required this.address,
+  });
   final double latitude;
   final double longitude;
+  final double accuracy;
+  final DateTime capturedAt;
   final String address;
 }
 
@@ -882,9 +891,12 @@ String canonicalDepartmentKey(String? dept) {
   if (dept == null || dept.trim().isEmpty) return 'tech';
   final key = dept.trim().toLowerCase();
   if (key.contains('tech') || key.contains('engineer')) return 'tech';
-  if (key.contains('tele') || key.contains('call') || key.contains('client')) return 'telecalling';
+  if (key.contains('tele') || key.contains('call') || key.contains('client'))
+    return 'telecalling';
   if (key.contains('human') || key == 'hr') return 'hr';
-  return key.replaceAll(RegExp(r'\s+'), '-').replaceAll(RegExp(r'[^a-z0-9_-]'), '');
+  return key
+      .replaceAll(RegExp(r'\s+'), '-')
+      .replaceAll(RegExp(r'[^a-z0-9_-]'), '');
 }
 
 /// Canonical Chat message representation for department chat, matching

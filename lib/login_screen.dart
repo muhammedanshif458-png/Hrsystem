@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
 import 'models.dart';
@@ -59,7 +58,6 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
       _locationError = null;
       _permanentlyDenied = false;
     });
-    if (mode == 'Work From Home') await _detectLocation();
   }
 
   Future<void> _detectLocation() async {
@@ -72,59 +70,48 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
         throw const _LocationMessage(
-            'Please enable location services to continue.');
+            'Location services are turned off. Enable GPS and retry.');
       }
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied)
         permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
         throw const _LocationMessage(
-            'Location permission is required for Work From Home sign-in.');
+            'Location permission was denied. Allow location access and retry sign-in.');
       }
       if (permission == LocationPermission.deniedForever) {
         setState(() => _permanentlyDenied = true);
         throw const _LocationMessage(
-            'Location permission is blocked. Enable it in app settings to continue.');
+            'Location permission is blocked. Enable it in app settings, then retry sign-in.');
       }
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
             accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)),
       );
-      var address =
-          '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
-      try {
-        final placemarks = await Geocoding()
-            .placemarkFromCoordinates(position.latitude, position.longitude);
-        if (placemarks.isNotEmpty) {
-          final place = placemarks.first;
-          final parts = [
-            place.locality,
-            place.subAdministrativeArea,
-            place.administrativeArea,
-            place.country
-          ]
-              .whereType<String>()
-              .map((part) => part.trim())
-              .where((part) => part.isNotEmpty)
-              .toSet()
-              .toList();
-          if (parts.isNotEmpty) address = parts.join(', ');
-        }
-      } catch (_) {
-        // Coordinates are still the real device location if reverse geocoding is unavailable.
+      if (!position.latitude.isFinite ||
+          !position.longitude.isFinite ||
+          !position.accuracy.isFinite ||
+          position.latitude < -90 ||
+          position.latitude > 90 ||
+          position.longitude < -180 ||
+          position.longitude > 180) {
+        throw const _LocationMessage(
+            'GPS returned an invalid location. Please retry sign-in.');
       }
       if (mounted)
         setState(() => _location = LocationCapture(
             latitude: position.latitude,
             longitude: position.longitude,
-            address: address));
+            accuracy: position.accuracy,
+            capturedAt: position.timestamp.toUtc(),
+            address: 'Location captured'));
     } on _LocationMessage catch (error) {
       if (mounted) setState(() => _locationError = error.message);
     } catch (error) {
       if (mounted)
         setState(() => _locationError = error is TimeoutException
             ? 'Location detection timed out. Please retry.'
-            : 'Unable to detect your location. Check location settings and retry.');
+            : 'Location is unavailable. Check GPS and app permission, then retry.');
     } finally {
       if (mounted) setState(() => _locating = false);
     }
@@ -132,15 +119,29 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
 
   Future<void> _submit() async {
     if (_busy || _locating) return;
-    if (_workMode == 'Work From Home' && _location == null) {
-      setState(() => _locationError ??=
-          'Location permission is required for Work From Home sign-in.');
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a valid work email.')));
+      return;
+    }
+    if (password.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter your password.')));
+      return;
+    }
+    if (_workMode != 'Office' && _workMode != 'Work From Home') {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a work mode.')));
       return;
     }
     setState(() => _busy = true);
     try {
-      await widget.onSignIn(_emailController.text, _passwordController.text,
-          _workMode, _location);
+      await _detectLocation();
+      if (_location == null) return;
+      await widget.onSignIn(email, password,
+          _workMode == 'Office' ? 'OFFICE' : 'WORK_FROM_HOME', _location);
     } catch (error) {
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -227,7 +228,13 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                           child: _modeButton(
                               'Work From Home', Icons.home_work_outlined)),
                     ]),
-                    if (_workMode == 'Work From Home') ...[
+                    const SizedBox(height: 7),
+                    const Text(
+                      'GPS location is collected during sign in for attendance and work-location records.',
+                      style: TextStyle(fontSize: 11, color: _muted),
+                    ),
+                    if (_workMode == 'Work From Home' ||
+                        _locationError != null) ...[
                       const SizedBox(height: 11),
                       _locationCard(),
                     ],
@@ -263,12 +270,8 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                         width: double.infinity,
                         height: 50,
                         child: FilledButton.icon(
-                          onPressed: _busy ||
-                                  _locating ||
-                                  (_workMode == 'Work From Home' &&
-                                      _location == null)
-                              ? null
-                              : _submit,
+                          onPressed:
+                              _busy || _locating || false ? null : _submit,
                           icon: _busy
                               ? const SizedBox(
                                   width: 16,
@@ -370,7 +373,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                           padding: EdgeInsets.zero,
                           visualDensity: VisualDensity.compact)),
               ])),
-          if (!_locating)
+          if (!_locating && _locationError != null)
             IconButton(
                 onPressed: _detectLocation,
                 tooltip: 'Retry location detection',

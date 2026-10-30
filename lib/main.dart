@@ -4,6 +4,7 @@ import 'login_screen.dart';
 import 'models.dart';
 import 'staff_department_screen.dart';
 import 'staff_screens.dart';
+import 'storage/token_storage.dart';
 
 void main() => runApp(const StaffHubApp());
 
@@ -51,9 +52,39 @@ class _AppPagesState extends State<_AppPages> {
   Staff? _staff;
   String _workMode = 'Office';
   String? _workLocation;
+  bool _restoringSession = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    try {
+      if (await TokenStorage.hasToken()) {
+        final staff = await _repository.fetchProfile();
+        final mode = await TokenStorage.getWorkMode();
+        if (staff.id.isNotEmpty && mounted) {
+          setState(() {
+            _staff = staff;
+            _selectedDepartment = staff.department;
+            _departmentSelected = true;
+            _workMode = mode == 'WORK_FROM_HOME' ? 'Work From Home' : 'Office';
+            _loggedIn = true;
+          });
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _restoringSession = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_restoringSession) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     if (!_departmentSelected) {
       return StaffDepartmentScreen(
         selectedDepartment: _selectedDepartment,
@@ -70,7 +101,11 @@ class _AppPagesState extends State<_AppPages> {
           _departmentSelected = false;
         }),
         onSignIn: (email, password, workMode, location) async {
-          final staff = await _repository.signIn(email, password);
+          final staff = await _repository.signIn(email, password,
+              workMode: workMode, location: location);
+          final savedWorkMode = await TokenStorage.getWorkMode();
+          final displayWorkMode =
+              savedWorkMode == 'WORK_FROM_HOME' ? 'Work From Home' : 'Office';
           if (staff.role != Role.staff) {
             _repository.signOut();
             throw Exception('Not a staff account.');
@@ -78,23 +113,24 @@ class _AppPagesState extends State<_AppPages> {
           await _repository.recordStaffSignIn(StaffSignInRecord(
             staffId: staff.id,
             department: _selectedDepartment!,
-            workMode: workMode,
+            workMode: displayWorkMode,
             timestamp: DateTime.now(),
-            latitude: workMode == 'Work From Home' ? location?.latitude : null,
+            latitude: workMode == 'WORK_FROM_HOME' ? location?.latitude : null,
             longitude:
-                workMode == 'Work From Home' ? location?.longitude : null,
+                workMode == 'WORK_FROM_HOME' ? location?.longitude : null,
             locationAddress:
-                workMode == 'Work From Home' ? location?.address : null,
+                workMode == 'WORK_FROM_HOME' ? location?.address : null,
           ));
-          final effectiveDept = (staff.department.isNotEmpty && staff.department != Department.all)
+          final effectiveDept = (staff.department.isNotEmpty &&
+                  staff.department != Department.all)
               ? staff.department
               : _selectedDepartment!;
           setState(() {
             _staff = staff;
             _selectedDepartment = effectiveDept;
-            _workMode = workMode;
+            _workMode = displayWorkMode;
             _workLocation =
-                workMode == 'Work From Home' ? location?.address : null;
+                workMode == 'WORK_FROM_HOME' ? location?.address : null;
             _loggedIn = true;
           });
         },

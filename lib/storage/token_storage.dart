@@ -1,4 +1,4 @@
-﻿// ─── lib/storage/token_storage.dart ──────────────────────────────────────────
+// ─── lib/storage/token_storage.dart ──────────────────────────────────────────
 // Handles saving, loading, and clearing the auth token from SharedPreferences.
 // The ApiService reads the token from here to attach it to requests.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6,8 +6,19 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TokenStorage {
-  static const String _tokenKey        = 'staffhub.auth.token';
+  static const String _tokenKey = 'staffhub.auth.token';
   static const String _refreshTokenKey = 'staffhub.auth.refresh_token';
+  static const String _workModeKey = 'staffhub.auth.work_mode';
+
+  static Future<void> saveWorkMode(String workMode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_workModeKey, workMode);
+  }
+
+  static Future<String?> getWorkMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_workModeKey);
+  }
 
   // ── Save tokens ───────────────────────────────────────────────────────────
   static Future<void> saveToken(String token) async {
@@ -44,6 +55,7 @@ class TokenStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     await prefs.remove(_refreshTokenKey);
+    await prefs.remove(_workModeKey);
   }
 
   // ── Quick check ───────────────────────────────────────────────────────────

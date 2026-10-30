@@ -12,8 +12,16 @@
   ```json
   {
     "email": "string (required, valid email)",
-    "password": "string (required)"
+    "password": "string (required)",
+    "workMode": "OFFICE | WORK_FROM_HOME",
+    "location": {
+      "latitude": "number",
+      "longitude": "number",
+      "accuracy": "number (meters)",
+      "capturedAt": "ISO-8601 timestamp"
+    }
   }
+* Work mode/location acceptance and the backend missing-location policy are not yet verified. The StaffHub login UI requires a successful one-time GPS capture for either work mode.
   ```
 * **Success Status:** 200 OK
 * **Success Response:** NOT VERIFIED

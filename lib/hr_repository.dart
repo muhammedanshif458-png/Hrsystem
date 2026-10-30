@@ -26,7 +26,8 @@ abstract class HRRepository {
   ValueNotifier<List<ResignationRequest>> get resignationRequests;
   ValueNotifier<bool> get isFirebaseConnected;
 
-  Future<Staff> signIn(String email, String password);
+  Future<Staff> signIn(String email, String password,
+      {String workMode = 'OFFICE', LocationCapture? location});
   Future<void> recordStaffSignIn(StaffSignInRecord record);
   Future<void> switchUserDirect(Staff staff);
   void signOut();
@@ -257,7 +258,8 @@ class HRRepositoryImpl implements HRRepository {
   // ── Auth ──────────────────────────────────────────────────────────────────
 
   @override
-  Future<Staff> signIn(String email, String password) async {
+  Future<Staff> signIn(String email, String password,
+      {String workMode = 'OFFICE', LocationCapture? location}) async {
     final trimmedEmail = email.trim().toLowerCase();
     final trimmedPassword = password.trim();
 
@@ -268,13 +270,27 @@ class HRRepositoryImpl implements HRRepository {
       throw Exception('Please enter your password.');
     }
 
+    if (workMode != 'OFFICE' && workMode != 'WORK_FROM_HOME') {
+      throw Exception('Please select a valid work mode.');
+    }
+
     try {
+      final body = <String, dynamic>{
+        'email': trimmedEmail,
+        'password': trimmedPassword,
+        'workMode': workMode,
+      };
+      if (location != null) {
+        body['location'] = {
+          'latitude': location.latitude,
+          'longitude': location.longitude,
+          'accuracy': location.accuracy,
+          'capturedAt': location.capturedAt.toUtc().toIso8601String(),
+        };
+      }
       final response = await _api.post(
         ApiConfig.login,
-        body: {
-          'email': trimmedEmail,
-          'password': trimmedPassword,
-        },
+        body: body,
         requiresAuth: false,
       );
 
@@ -295,6 +311,8 @@ class HRRepositoryImpl implements HRRepository {
       if (token.isNotEmpty) {
         await TokenStorage.saveTokens(token: token, refreshToken: refreshToken);
       }
+      final savedWorkMode = _canonicalWorkMode(data['workMode'] ?? workMode);
+      await TokenStorage.saveWorkMode(savedWorkMode);
 
       final userMap = data['user'] as Map<String, dynamic>? ?? {};
       final rawRole = (userMap['role'] ?? '').toString().toUpperCase();
@@ -334,8 +352,9 @@ class HRRepositoryImpl implements HRRepository {
           ? fullName
           : (userMap['name']?.toString() ?? 'Staff Member');
 
-      final rawDept =
-          (empMap?['department'] ?? userMap['department'] ?? '').toString().trim();
+      final rawDept = (empMap?['department'] ?? userMap['department'] ?? '')
+          .toString()
+          .trim();
       final staffDept = rawDept.toLowerCase().contains('tele')
           ? Department.telecalling
           : (rawDept.toLowerCase().contains('tech')
@@ -367,9 +386,8 @@ class HRRepositoryImpl implements HRRepository {
             : DateTime.now().toString().split(' ').first,
         status: staffStatus,
         onLeaveToday: empMap?['status']?.toString().toUpperCase() == 'ON_LEAVE',
-        schedule: rawSchedule is Map
-            ? Map<String, dynamic>.from(rawSchedule)
-            : null,
+        schedule:
+            rawSchedule is Map ? Map<String, dynamic>.from(rawSchedule) : null,
         shift: rawShift?.toString(),
       );
 
@@ -411,6 +429,16 @@ class HRRepositoryImpl implements HRRepository {
     staffSignInRecords.value = [record, ...staffSignInRecords.value];
   }
 
+  String _canonicalWorkMode(dynamic raw) {
+    final value = raw
+        ?.toString()
+        .trim()
+        .toUpperCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    return value == 'WORK_FROM_HOME' ? 'WORK_FROM_HOME' : 'OFFICE';
+  }
+
   @override
   Future<void> switchUserDirect(Staff staff) async {
     currentUser.value = staff;
@@ -422,6 +450,10 @@ class HRRepositoryImpl implements HRRepository {
       final response = await _api.get(ApiConfig.staffProfile);
       if (response['success'] == true) {
         final data = response['data'];
+        final backendWorkMode = data is Map ? data['workMode'] : null;
+        if (backendWorkMode != null) {
+          await TokenStorage.saveWorkMode(_canonicalWorkMode(backendWorkMode));
+        }
         final rawSchedule = data['schedule'] ?? data['scheduleSnapshot'];
         final rawShift = data['shift']?.toString();
         final updatedStaff = currentUser.value?.copyWith(
@@ -1188,8 +1220,8 @@ class HRRepositoryImpl implements HRRepository {
       throw Exception('Message cannot be empty');
     }
 
-    final effectiveClientMessageId = clientMessageId ??
-        'client_${DateTime.now().millisecondsSinceEpoch}';
+    final effectiveClientMessageId =
+        clientMessageId ?? 'client_${DateTime.now().millisecondsSinceEpoch}';
 
     try {
       final endpoint = departmentKey != null && departmentKey.isNotEmpty
@@ -1248,9 +1280,8 @@ class HRRepositoryImpl implements HRRepository {
   Future<void> deleteDepartmentMessageForMe(String messageId) async {
     try {
       await _api.patch(ApiConfig.staffChatMessageDeleteForMe(messageId));
-      departmentChatMessages.value = departmentChatMessages.value
-          .where((m) => m.id != messageId)
-          .toList();
+      departmentChatMessages.value =
+          departmentChatMessages.value.where((m) => m.id != messageId).toList();
     } catch (e) {
       debugPrint('deleteDepartmentMessageForMe error: $e');
       rethrow;
@@ -1261,9 +1292,8 @@ class HRRepositoryImpl implements HRRepository {
   Future<void> deleteDepartmentMessageForEveryone(String messageId) async {
     try {
       await _api.delete(ApiConfig.staffChatMessageDelete(messageId));
-      departmentChatMessages.value = departmentChatMessages.value
-          .where((m) => m.id != messageId)
-          .toList();
+      departmentChatMessages.value =
+          departmentChatMessages.value.where((m) => m.id != messageId).toList();
     } catch (e) {
       debugPrint('deleteDepartmentMessageForEveryone error: $e');
       rethrow;
