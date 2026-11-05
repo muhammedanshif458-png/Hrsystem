@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hr_core/login_screen.dart';
@@ -12,6 +13,8 @@ class FakeLoginLocationProvider implements LoginLocationProvider {
     this.serviceEnabled = true,
     this.initialPermission = LocationPermission.whileInUse,
     this.requestPermissionResult = LocationPermission.whileInUse,
+    this.openAppSettingsResult = true,
+    this.openAppSettingsThrows = false,
     this.position,
     this.positionError,
   });
@@ -19,6 +22,8 @@ class FakeLoginLocationProvider implements LoginLocationProvider {
   bool serviceEnabled;
   LocationPermission initialPermission;
   LocationPermission requestPermissionResult;
+  bool openAppSettingsResult;
+  bool openAppSettingsThrows;
   Position? position;
   Object? positionError;
 
@@ -70,7 +75,10 @@ class FakeLoginLocationProvider implements LoginLocationProvider {
   @override
   Future<bool> openAppSettings() async {
     openAppSettingsCalls++;
-    return true;
+    if (openAppSettingsThrows) {
+      throw PlatformException(code: 'FAILED', message: 'Could not open settings');
+    }
+    return openAppSettingsResult;
   }
 }
 
@@ -394,7 +402,154 @@ void main() {
       expect(find.textContaining('placeholder coordinates'), findsWidgets);
     });
 
-    testWidgets('8. WORK_FROM_HOME + permission permanently denied -> shows open settings button',
+    testWidgets('8. WORK_FROM_HOME + permission permanently denied -> shows open settings button and invokes callback',
+        (WidgetTester tester) async {
+      final fakeGps = FakeLoginLocationProvider(
+        serviceEnabled: true,
+        initialPermission: LocationPermission.deniedForever,
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: StaffLoginPage(
+          selectedDepartment: 'Tech',
+          locationProvider: fakeGps,
+          onSignIn: (email, password, workMode, location) async {},
+        ),
+      ));
+
+      await tester.tap(find.text('Work From Home'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Enter your email'), 'wfh@company.com');
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Enter your password'), 'Pass@123');
+
+      final signInBtn = find.widgetWithText(FilledButton, 'Sign In');
+      await tester.ensureVisible(signInBtn);
+      await tester.tap(signInBtn);
+      await tester.pumpAndSettle();
+
+      final settingsBtnFinder = find.byKey(const ValueKey('open-app-settings-button'));
+      expect(settingsBtnFinder, findsOneWidget);
+      await tester.tap(settingsBtnFinder);
+      await tester.pumpAndSettle();
+
+      expect(fakeGps.openAppSettingsCalls, 1);
+    });
+
+    testWidgets('9. Open App Settings handles failure/false safely without crashing',
+        (WidgetTester tester) async {
+      final fakeGps = FakeLoginLocationProvider(
+        serviceEnabled: true,
+        initialPermission: LocationPermission.deniedForever,
+        openAppSettingsResult: false, // returns false
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: StaffLoginPage(
+          selectedDepartment: 'Tech',
+          locationProvider: fakeGps,
+          onSignIn: (email, password, workMode, location) async {},
+        ),
+      ));
+
+      await tester.tap(find.text('Work From Home'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Enter your email'), 'wfh@company.com');
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Enter your password'), 'Pass@123');
+
+      final signInBtn = find.widgetWithText(FilledButton, 'Sign In');
+      await tester.ensureVisible(signInBtn);
+      await tester.tap(signInBtn);
+      await tester.pumpAndSettle();
+
+      final settingsBtnFinder = find.byKey(const ValueKey('open-app-settings-button'));
+      expect(settingsBtnFinder, findsOneWidget);
+      await tester.tap(settingsBtnFinder);
+      await tester.pumpAndSettle();
+
+      expect(fakeGps.openAppSettingsCalls, 1);
+      // Fallback message shown in SnackBar
+      expect(find.textContaining('Could not open settings automatically'), findsOneWidget);
+    });
+
+    testWidgets('10. After returning from Settings: permission granted clears permanent-denial and retry sign-in succeeds',
+        (WidgetTester tester) async {
+      final fakeGps = FakeLoginLocationProvider(
+        serviceEnabled: true,
+        initialPermission: LocationPermission.deniedForever,
+        position: Position(
+          latitude: 19.0760,
+          longitude: 72.8777,
+          timestamp: DateTime.utc(2026, 11, 5, 11, 0),
+          accuracy: 10.0,
+          altitude: 0.0,
+          altitudeAccuracy: 0.0,
+          heading: 0.0,
+          headingAccuracy: 0.0,
+          speed: 0.0,
+          speedAccuracy: 0.0,
+        ),
+      );
+
+      String? loggedInWorkMode;
+      LocationCapture? loggedInLocation;
+
+      await tester.pumpWidget(MaterialApp(
+        home: StaffLoginPage(
+          selectedDepartment: 'Tech',
+          locationProvider: fakeGps,
+          onSignIn: (email, password, workMode, location) async {
+            loggedInWorkMode = workMode;
+            loggedInLocation = location;
+          },
+        ),
+      ));
+
+      await tester.tap(find.text('Work From Home'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Enter your email'), 'wfh@company.com');
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Enter your password'), 'Pass@123');
+
+      // Attempt 1: Permanently denied -> blocked
+      final signInBtn = find.widgetWithText(FilledButton, 'Sign In');
+      await tester.ensureVisible(signInBtn);
+      await tester.tap(signInBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Open app settings'), findsOneWidget);
+      expect(find.textContaining('Location permission is blocked'), findsWidgets);
+      expect(loggedInWorkMode, isNull);
+
+      // User simulates granting permission in Settings
+      fakeGps.initialPermission = LocationPermission.whileInUse;
+
+      // User taps "Open app settings" button
+      await tester.tap(find.byKey(const ValueKey('open-app-settings-button')));
+      await tester.pumpAndSettle();
+
+      // Permanent denial error and open settings button must be gone!
+      expect(find.text('Open app settings'), findsNothing);
+      expect(find.textContaining('Location permission is blocked'), findsNothing);
+
+      // Now user taps Sign In -> fresh location captured and login succeeds
+      await tester.tap(signInBtn);
+      await tester.pumpAndSettle();
+
+      expect(loggedInWorkMode, 'WORK_FROM_HOME');
+      expect(loggedInLocation, isNotNull);
+      expect(loggedInLocation!.latitude, 19.0760);
+      expect(loggedInLocation!.longitude, 72.8777);
+    });
+
+    testWidgets('11. Returning via app lifecycle resume re-checks permission and removes permanent denial',
         (WidgetTester tester) async {
       final fakeGps = FakeLoginLocationProvider(
         serviceEnabled: true,
@@ -423,13 +578,18 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Open app settings'), findsOneWidget);
-      await tester.tap(find.text('Open app settings'));
+
+      // User changes permission in Android Settings and returns to app (triggering lifecycle resume)
+      fakeGps.initialPermission = LocationPermission.whileInUse;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pumpAndSettle();
 
-      expect(fakeGps.openAppSettingsCalls, 1);
+      // Re-checked on resume: open settings button and error cleared
+      expect(find.text('Open app settings'), findsNothing);
+      expect(find.textContaining('Location permission is blocked'), findsNothing);
     });
 
-    testWidgets('9. UI: GPS explanation clarifies location is required only for Work From Home',
+    testWidgets('12. UI: GPS explanation clarifies location is required only for Work From Home',
         (WidgetTester tester) async {
       await tester.pumpWidget(MaterialApp(
         home: StaffLoginPage(
@@ -446,5 +606,35 @@ void main() {
       );
     });
   });
-}
 
+  group('DefaultLoginLocationProvider platform fallback', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+
+    test('openAppSettings falls back to platform settings channel if Geolocator throws',
+        () async {
+      var channelCalled = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('com.example.hr_core/app_settings'),
+        (MethodCall call) async {
+          if (call.method == 'openAppSettings') {
+            channelCalled = true;
+            return true;
+          }
+          if (call.method == 'getApplicationId') {
+            return 'com.example.hr_core';
+          }
+          return null;
+        },
+      );
+
+      // In unit test without real Geolocator plugin, openAppSettings throws or fails
+      // and invokes our custom Android platform channel fallback
+      const provider = DefaultLoginLocationProvider();
+      final result = await provider.openAppSettings();
+
+      expect(channelCalled, isTrue);
+      expect(result, isTrue);
+    });
+  });
+}

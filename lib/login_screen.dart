@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'models.dart';
 
@@ -20,14 +22,20 @@ abstract class LoginLocationProvider {
 class DefaultLoginLocationProvider implements LoginLocationProvider {
   const DefaultLoginLocationProvider();
 
-  @override
-  Future<bool> isLocationServiceEnabled() => Geolocator.isLocationServiceEnabled();
+  static const MethodChannel _settingsChannel =
+      MethodChannel('com.example.hr_core/app_settings');
 
   @override
-  Future<LocationPermission> checkPermission() => Geolocator.checkPermission();
+  Future<bool> isLocationServiceEnabled() =>
+      Geolocator.isLocationServiceEnabled();
 
   @override
-  Future<LocationPermission> requestPermission() => Geolocator.requestPermission();
+  Future<LocationPermission> checkPermission() =>
+      Geolocator.checkPermission();
+
+  @override
+  Future<LocationPermission> requestPermission() =>
+      Geolocator.requestPermission();
 
   @override
   Future<Position> getCurrentPosition() => Geolocator.getCurrentPosition(
@@ -38,7 +46,47 @@ class DefaultLoginLocationProvider implements LoginLocationProvider {
       );
 
   @override
-  Future<bool> openAppSettings() => Geolocator.openAppSettings();
+  Future<bool> openAppSettings() async {
+    try {
+      final success = await Geolocator.openAppSettings();
+      if (success) return true;
+    } catch (_) {
+      // Continue to platform-specific fallback
+    }
+
+    // Android fallback using platform-supported settings intent with dynamic packageName
+    try {
+      final fallbackSuccess =
+          await _settingsChannel.invokeMethod<bool>('openAppSettings');
+      if (fallbackSuccess == true) return true;
+    } catch (_) {
+      // Platform channel not available or threw
+    }
+
+    // URL launcher fallback using installed app ID
+    try {
+      String? packageId;
+      try {
+        packageId =
+            await _settingsChannel.invokeMethod<String>('getApplicationId');
+      } catch (_) {}
+
+      final urisToTry = <Uri>[
+        if (packageId != null && packageId.isNotEmpty)
+          Uri.parse('package:$packageId'),
+        Uri.parse('app-settings:'),
+      ];
+
+      for (final uri in urisToTry) {
+        if (await canLaunchUrl(uri)) {
+          final launched = await launchUrl(uri);
+          if (launched) return true;
+        }
+      }
+    } catch (_) {}
+
+    return false;
+  }
 }
 
 class StaffLoginPage extends StatefulWidget {
@@ -59,7 +107,8 @@ class StaffLoginPage extends StatefulWidget {
   State<StaffLoginPage> createState() => _StaffLoginPageState();
 }
 
-class _StaffLoginPageState extends State<StaffLoginPage> {
+class _StaffLoginPageState extends State<StaffLoginPage>
+    with WidgetsBindingObserver {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _hidePassword = true;
@@ -69,6 +118,12 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
   String _workMode = 'Office';
   String? _locationError;
   LocationCapture? _location;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   void _handleBack() {
     if (widget.onBack != null) {
@@ -80,9 +135,92 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _recheckLocationStateAfterSettings();
+    }
+  }
+
+  Future<void> _recheckLocationStateAfterSettings() async {
+    if (!mounted || _workMode != 'Work From Home') return;
+    try {
+      final serviceEnabled =
+          await widget.locationProvider.isLocationServiceEnabled();
+      final permission = await widget.locationProvider.checkPermission();
+
+      if (!mounted) return;
+
+      if (!serviceEnabled) {
+        setState(() {
+          _permanentlyDenied = false;
+          _locationError =
+              'Location services are turned off. Enable GPS and retry.';
+          _location = null;
+        });
+        return;
+      }
+
+      if (permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        setState(() {
+          _permanentlyDenied = false;
+          _locationError = null;
+        });
+      } else if (permission == LocationPermission.denied) {
+        setState(() {
+          _permanentlyDenied = false;
+          _locationError =
+              'Location permission was denied. Allow location access and retry sign-in.';
+          _location = null;
+        });
+      } else if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _permanentlyDenied = true;
+          _locationError =
+              'Location permission is blocked. Enable it in app settings, then retry sign-in.';
+          _location = null;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _handleOpenAppSettings() async {
+    try {
+      final opened = await widget.locationProvider.openAppSettings();
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not open settings automatically. Please open Settings > Apps > StaffHub to grant location permission.',
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not open settings automatically. Please open Settings > Apps > StaffHub to grant location permission.',
+            ),
+          ),
+        );
+      }
+    }
+
+    if (mounted) {
+      await _recheckLocationStateAfterSettings();
+    }
   }
 
   Future<void> _selectWorkMode(String mode) async {
@@ -136,12 +274,16 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
       }
       if (mounted) {
         final timestamp = position.timestamp.toUtc();
-        setState(() => _location = LocationCapture(
-            latitude: position.latitude,
-            longitude: position.longitude,
-            accuracy: position.accuracy,
-            capturedAt: timestamp,
-            address: 'Location captured'));
+        setState(() {
+          _permanentlyDenied = false;
+          _locationError = null;
+          _location = LocationCapture(
+              latitude: position.latitude,
+              longitude: position.longitude,
+              accuracy: position.accuracy,
+              capturedAt: timestamp,
+              address: 'Location captured');
+        });
       }
     } on _LocationMessage catch (error) {
       if (mounted) {
@@ -165,16 +307,19 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please enter a valid work email.')));
       return;
     }
     if (password.trim().isEmpty) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please enter your password.')));
       return;
     }
     if (_workMode != 'Office' && _workMode != 'Work From Home') {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please select a work mode.')));
       return;
@@ -185,6 +330,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
         await _detectLocation();
         if (_location == null) {
           if (mounted && _locationError != null) {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
             ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(_locationError!)));
           }
@@ -198,6 +344,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
       await widget.onSignIn(email, password, workModeCode, locationToSend);
     } catch (error) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(error.toString().replaceFirst('Exception: ', ''))));
       }
@@ -422,13 +569,19 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                       style: const TextStyle(
                           fontSize: 12, color: Color(0xffc0392b))),
                 if (!_locating && _permanentlyDenied)
-                  TextButton.icon(
-                      onPressed: widget.locationProvider.openAppSettings,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: TextButton.icon(
+                      key: const ValueKey('open-app-settings-button'),
+                      onPressed: _handleOpenAppSettings,
                       icon: const Icon(Icons.settings_outlined, size: 15),
                       label: const Text('Open app settings'),
                       style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          visualDensity: VisualDensity.compact)),
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
                 if (!_locating && _location == null && _locationError == null)
                   const Text('Location will be captured when you sign in.',
                       style: TextStyle(fontSize: 12, color: _muted)),
