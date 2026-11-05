@@ -1,103 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:url_launcher/url_launcher.dart';
-
-import 'models.dart';
 
 const _blue = Color(0xff2864e8);
 const _ink = Color(0xff1b2638);
 const _muted = Color(0xff77849a);
-
-abstract class LoginLocationProvider {
-  Future<bool> isLocationServiceEnabled();
-  Future<LocationPermission> checkPermission();
-  Future<LocationPermission> requestPermission();
-  Future<Position> getCurrentPosition();
-  Future<bool> openAppSettings();
-  Future<bool> openLocationSettings();
-}
-
-class DefaultLoginLocationProvider implements LoginLocationProvider {
-  const DefaultLoginLocationProvider();
-
-  static const MethodChannel _settingsChannel =
-      MethodChannel('com.example.hr_core/app_settings');
-
-  @override
-  Future<bool> isLocationServiceEnabled() =>
-      Geolocator.isLocationServiceEnabled();
-
-  @override
-  Future<LocationPermission> checkPermission() =>
-      Geolocator.checkPermission();
-
-  @override
-  Future<LocationPermission> requestPermission() =>
-      Geolocator.requestPermission();
-
-  @override
-  Future<Position> getCurrentPosition() => Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 20),
-        ),
-      );
-
-  @override
-  Future<bool> openAppSettings() async {
-    try {
-      final success = await Geolocator.openAppSettings();
-      if (success) return true;
-    } catch (_) {
-      // Continue to platform-specific fallback
-    }
-
-    // Android fallback using platform-supported settings intent with dynamic packageName
-    try {
-      final fallbackSuccess =
-          await _settingsChannel.invokeMethod<bool>('openAppSettings');
-      if (fallbackSuccess == true) return true;
-    } catch (_) {
-      // Platform channel not available or threw
-    }
-
-    // URL launcher fallback using installed app ID
-    try {
-      String? packageId;
-      try {
-        packageId =
-            await _settingsChannel.invokeMethod<String>('getApplicationId');
-      } catch (_) {}
-
-      final urisToTry = <Uri>[
-        if (packageId != null && packageId.isNotEmpty)
-          Uri.parse('package:$packageId'),
-        Uri.parse('app-settings:'),
-      ];
-
-      for (final uri in urisToTry) {
-        if (await canLaunchUrl(uri)) {
-          final launched = await launchUrl(uri);
-          if (launched) return true;
-        }
-      }
-    } catch (_) {}
-
-    return false;
-  }
-
-  @override
-  Future<bool> openLocationSettings() async {
-    try {
-      return await Geolocator.openLocationSettings();
-    } catch (_) {
-      return false;
-    }
-  }
-}
 
 class StaffLoginPage extends StatefulWidget {
   const StaffLoginPage({
@@ -105,33 +12,29 @@ class StaffLoginPage extends StatefulWidget {
     required this.selectedDepartment,
     required this.onSignIn,
     this.onBack,
-    this.locationProvider = const DefaultLoginLocationProvider(),
   });
   final String selectedDepartment;
-  final Future<void> Function(String email, String password, String workMode,
-      LocationCapture? location) onSignIn;
+  final Future<void> Function(
+    String email,
+    String password,
+    String workMode,
+  ) onSignIn;
   final VoidCallback? onBack;
-  final LoginLocationProvider locationProvider;
 
   @override
   State<StaffLoginPage> createState() => _StaffLoginPageState();
 }
 
-class _StaffLoginPageState extends State<StaffLoginPage>
-    with WidgetsBindingObserver {
+class _StaffLoginPageState extends State<StaffLoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _hidePassword = true;
   bool _busy = false;
-  bool _locating = false;
   String _workMode = 'Office';
-  String? _locationError;
-  LocationCapture? _location;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
   }
 
   void _handleBack() {
@@ -144,196 +47,19 @@ class _StaffLoginPageState extends State<StaffLoginPage>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _recheckLocationStateAfterSettings();
-    }
-  }
-
-  Future<void> _recheckLocationStateAfterSettings() async {
-    if (!mounted || _workMode != 'Work From Home') return;
-    try {
-      final serviceEnabled =
-          await widget.locationProvider.isLocationServiceEnabled();
-      final permission = await widget.locationProvider.checkPermission();
-
-      if (!mounted) return;
-
-      if (!serviceEnabled) {
-        setState(() {
-          _locationError =
-              'Location services are turned off. Enable GPS and retry.';
-          _location = null;
-        });
-        return;
-      }
-
-      if (permission == LocationPermission.always ||
-          permission == LocationPermission.whileInUse) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        setState(() {
-          _locationError = null;
-        });
-      } else if (permission == LocationPermission.denied) {
-        setState(() {
-          _locationError =
-              'Location permission was denied. Allow location access and retry sign-in.';
-          _location = null;
-        });
-      } else if (permission == LocationPermission.deniedForever) {
-        setState(() {
-          _locationError =
-              'Location permission is blocked. Enable it in app settings, then retry sign-in.';
-          _location = null;
-        });
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _handleOpenAppSettings() async {
-    try {
-      final opened = await widget.locationProvider.openAppSettings();
-      if (!opened && mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not open settings automatically. Please open Settings > Apps > StaffHub to grant location permission.',
-            ),
-          ),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not open settings automatically. Please open Settings > Apps > StaffHub to grant location permission.',
-            ),
-          ),
-        );
-      }
-    }
-
-    if (mounted) {
-      await _recheckLocationStateAfterSettings();
-    }
-  }
-
-  Future<void> _handleOpenLocationSettings() async {
-    try {
-      final opened = await widget.locationProvider.openLocationSettings();
-      if (!opened && mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not open location settings automatically. Please turn on Location in system settings.',
-            ),
-          ),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not open location settings automatically. Please turn on Location in system settings.',
-            ),
-          ),
-        );
-      }
-    }
-
-    if (mounted) {
-      await _recheckLocationStateAfterSettings();
-    }
-  }
-
-  Future<void> _selectWorkMode(String mode) async {
+  void _selectWorkMode(String mode) {
     setState(() {
       _workMode = mode;
-      _location = null;
-      _locationError = null;
     });
-  }
-
-  Future<void> _detectLocation() async {
-    if (_locating) return;
-    setState(() {
-      _locating = true;
-      _locationError = null;
-      _location = null;
-    });
-    try {
-      if (!await widget.locationProvider.isLocationServiceEnabled()) {
-        throw const _LocationMessage(
-            'Location services are turned off. Enable GPS and retry.');
-      }
-      var permission = await widget.locationProvider.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await widget.locationProvider.requestPermission();
-      }
-      if (permission == LocationPermission.denied) {
-        throw const _LocationMessage(
-            'Location permission was denied. Allow location access and retry sign-in.');
-      }
-      if (permission == LocationPermission.deniedForever) {
-        throw const _LocationMessage(
-            'Location permission is blocked. Enable it in app settings, then retry sign-in.');
-      }
-      final position = await widget.locationProvider.getCurrentPosition();
-      if (!position.latitude.isFinite ||
-          !position.longitude.isFinite ||
-          !position.accuracy.isFinite ||
-          position.latitude < -90 ||
-          position.latitude > 90 ||
-          position.longitude < -180 ||
-          position.longitude > 180 ||
-          (position.latitude == 0.0 && position.longitude == 0.0)) {
-        throw const _LocationMessage(
-            'GPS returned invalid or placeholder coordinates. Please retry with a valid GPS lock.');
-      }
-      if (mounted) {
-        final timestamp = position.timestamp.toUtc();
-        setState(() {
-          _locationError = null;
-          _location = LocationCapture(
-              latitude: position.latitude,
-              longitude: position.longitude,
-              accuracy: position.accuracy,
-              capturedAt: timestamp,
-              address: 'Location captured');
-        });
-      }
-    } on _LocationMessage catch (error) {
-      if (mounted) {
-        setState(() => _locationError = error.message);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() => _locationError = error is TimeoutException
-            ? 'Location detection timed out. Please check your GPS signal and retry.'
-            : 'Location is unavailable. Check GPS and app permission, then retry.');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _locating = false);
-      }
-    }
   }
 
   Future<void> _submit() async {
-    if (_busy || _locating) return;
+    if (_busy) return;
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
@@ -356,40 +82,8 @@ class _StaffLoginPageState extends State<StaffLoginPage>
     }
     setState(() => _busy = true);
     try {
-      if (_workMode == 'Work From Home') {
-        await _detectLocation();
-        if (_location == null) {
-          if (mounted && _locationError != null) {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-            final isBlocked = _locationError!.contains('app settings');
-            final isServiceDisabled = _locationError!.contains('turned off');
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(_locationError!),
-                action: isBlocked
-                    ? SnackBarAction(
-                        label: 'Settings',
-                        textColor: Colors.amber,
-                        onPressed: _handleOpenAppSettings,
-                      )
-                    : isServiceDisabled
-                        ? SnackBarAction(
-                            label: 'Settings',
-                            textColor: Colors.amber,
-                            onPressed: _handleOpenLocationSettings,
-                          )
-                        : null,
-              ),
-            );
-          }
-          return;
-        }
-      }
-
       final workModeCode = _workMode == 'Office' ? 'OFFICE' : 'WORK_FROM_HOME';
-      final locationToSend = _workMode == 'Office' ? null : _location;
-
-      await widget.onSignIn(email, password, workModeCode, locationToSend);
+      await widget.onSignIn(email, password, workModeCode);
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -480,11 +174,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                           child: _modeButton(
                               'Work From Home', Icons.home_work_outlined)),
                     ]),
-                    const SizedBox(height: 7),
-                    const Text(
-                      'GPS location is collected during sign in for attendance and work-location records (required only for Work From Home).',
-                      style: TextStyle(fontSize: 11, color: _muted),
-                    ),
                     const SizedBox(height: 16),
                     _label('Work Email'),
                     const SizedBox(height: 6),
@@ -517,8 +206,7 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                         width: double.infinity,
                         height: 50,
                         child: FilledButton.icon(
-                          onPressed:
-                              _busy || _locating || false ? null : _submit,
+                          onPressed: _busy ? null : _submit,
                           icon: _busy
                               ? const SizedBox(
                                   width: 16,
@@ -529,11 +217,7 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                           label: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text(_busy
-                                    ? (_locating
-                                        ? 'Detecting Location...'
-                                        : 'Signing In...')
-                                    : 'Sign In'),
+                                Text(_busy ? 'Signing In...' : 'Sign In'),
                                 const SizedBox(width: 7),
                                 if (!_busy) const Icon(Icons.login, size: 16)
                               ]),
@@ -603,9 +287,4 @@ class _StaffLoginPageState extends State<StaffLoginPage>
             borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: Color(0xffe4e9f1))),
       );
-}
-
-class _LocationMessage implements Exception {
-  const _LocationMessage(this.message);
-  final String message;
 }

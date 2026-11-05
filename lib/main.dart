@@ -100,9 +100,9 @@ class _AppPagesState extends State<_AppPages> {
         onBack: () => setState(() {
           _departmentSelected = false;
         }),
-        onSignIn: (email, password, workMode, location) async {
+        onSignIn: (email, password, workMode) async {
           final staff = await _repository.signIn(email, password,
-              workMode: workMode, location: location);
+              workMode: workMode);
           final savedWorkMode = await TokenStorage.getWorkMode();
           final displayWorkMode =
               savedWorkMode == 'WORK_FROM_HOME' ? 'Work From Home' : 'Office';
@@ -115,11 +115,6 @@ class _AppPagesState extends State<_AppPages> {
             department: _selectedDepartment!,
             workMode: displayWorkMode,
             timestamp: DateTime.now(),
-            latitude: workMode == 'WORK_FROM_HOME' ? location?.latitude : null,
-            longitude:
-                workMode == 'WORK_FROM_HOME' ? location?.longitude : null,
-            locationAddress:
-                workMode == 'WORK_FROM_HOME' ? location?.address : null,
           ));
           final effectiveDept = (staff.department.isNotEmpty &&
                   staff.department != Department.all)
@@ -129,8 +124,7 @@ class _AppPagesState extends State<_AppPages> {
             _staff = staff;
             _selectedDepartment = effectiveDept;
             _workMode = displayWorkMode;
-            _workLocation =
-                workMode == 'WORK_FROM_HOME' ? location?.address : null;
+            _workLocation = null;
             _loggedIn = true;
           });
         },

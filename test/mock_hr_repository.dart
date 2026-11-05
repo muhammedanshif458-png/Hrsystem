@@ -76,7 +76,7 @@ class MockHRRepository implements HRRepository {
 
   @override
   Future<Staff> signIn(String email, String password,
-      {String workMode = 'OFFICE', LocationCapture? location}) async {
+      {String workMode = 'OFFICE'}) async {
     return Staff(
         id: '1',
         name: 'Mock',

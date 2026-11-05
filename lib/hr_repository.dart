@@ -27,7 +27,7 @@ abstract class HRRepository {
   ValueNotifier<bool> get isFirebaseConnected;
 
   Future<Staff> signIn(String email, String password,
-      {String workMode = 'OFFICE', LocationCapture? location});
+      {String workMode = 'OFFICE'});
   Future<void> recordStaffSignIn(StaffSignInRecord record);
   Future<void> switchUserDirect(Staff staff);
   void signOut();
@@ -259,7 +259,7 @@ class HRRepositoryImpl implements HRRepository {
 
   @override
   Future<Staff> signIn(String email, String password,
-      {String workMode = 'OFFICE', LocationCapture? location}) async {
+      {String workMode = 'OFFICE'}) async {
     final trimmedEmail = email.trim().toLowerCase();
     final trimmedPassword = password.trim();
 
@@ -273,9 +273,6 @@ class HRRepositoryImpl implements HRRepository {
     if (workMode != 'OFFICE' && workMode != 'WORK_FROM_HOME') {
       throw Exception('Please select a valid work mode.');
     }
-    if (workMode == 'WORK_FROM_HOME' && location == null) {
-      throw Exception('GPS location is mandatory for Work From Home.');
-    }
 
     try {
       final body = <String, dynamic>{
@@ -283,14 +280,6 @@ class HRRepositoryImpl implements HRRepository {
         'password': trimmedPassword,
         'workMode': workMode,
       };
-      if (location != null) {
-        body['location'] = {
-          'latitude': location.latitude,
-          'longitude': location.longitude,
-          'accuracy': location.accuracy,
-          'capturedAt': location.capturedAt.toUtc().toIso8601String(),
-        };
-      }
       final response = await _api.post(
         ApiConfig.login,
         body: body,

@@ -3,7 +3,6 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  geolocator_windows
   pdfx
   url_launcher_windows
 )

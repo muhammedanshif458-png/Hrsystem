@@ -16,7 +16,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: StaffLoginPage(
           selectedDepartment: 'Tech',
-          onSignIn: (email, password, workMode, location) async {},
+          onSignIn: (email, password, workMode) async {},
         ),
       ));
 
@@ -45,7 +45,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: StaffLoginPage(
           selectedDepartment: 'Tech',
-          onSignIn: (email, password, workMode, location) async {},
+          onSignIn: (email, password, workMode) async {},
         ),
       ));
 
@@ -159,7 +159,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: StaffLoginPage(
           selectedDepartment: 'Tech',
-          onSignIn: (email, password, workMode, location) async {},
+          onSignIn: (email, password, workMode) async {},
           onBack: () => backCalled = true,
         ),
       ));
@@ -178,7 +178,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: StaffLoginPage(
           selectedDepartment: 'Tech',
-          onSignIn: (email, password, workMode, location) async {},
+          onSignIn: (email, password, workMode) async {},
         ),
       ));
 
@@ -206,16 +206,14 @@ void main() {
       String? capturedEmail;
       String? capturedPassword;
       String? capturedWorkMode;
-      dynamic capturedLocation;
 
       await tester.pumpWidget(MaterialApp(
         home: StaffLoginPage(
           selectedDepartment: 'Tech',
-          onSignIn: (email, password, workMode, location) async {
+          onSignIn: (email, password, workMode) async {
             capturedEmail = email;
             capturedPassword = password;
             capturedWorkMode = workMode;
-            capturedLocation = location;
           },
         ),
       ));
@@ -233,7 +231,6 @@ void main() {
       expect(capturedEmail, 'alex@company.com');
       expect(capturedPassword, 'MyPassword99');
       expect(capturedWorkMode, 'OFFICE');
-      expect(capturedLocation, isNull);
     });
   });
 
@@ -259,7 +256,7 @@ void main() {
         await tester.pumpWidget(MaterialApp(
           home: StaffLoginPage(
             selectedDepartment: 'Tech',
-            onSignIn: (email, password, workMode, location) async {},
+            onSignIn: (email, password, workMode) async {},
           ),
         ));
 
