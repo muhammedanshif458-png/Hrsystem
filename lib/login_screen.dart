@@ -17,6 +17,7 @@ abstract class LoginLocationProvider {
   Future<LocationPermission> requestPermission();
   Future<Position> getCurrentPosition();
   Future<bool> openAppSettings();
+  Future<bool> openLocationSettings();
 }
 
 class DefaultLoginLocationProvider implements LoginLocationProvider {
@@ -87,6 +88,15 @@ class DefaultLoginLocationProvider implements LoginLocationProvider {
 
     return false;
   }
+
+  @override
+  Future<bool> openLocationSettings() async {
+    try {
+      return await Geolocator.openLocationSettings();
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 class StaffLoginPage extends StatefulWidget {
@@ -115,6 +125,7 @@ class _StaffLoginPageState extends State<StaffLoginPage>
   bool _busy = false;
   bool _locating = false;
   bool _permanentlyDenied = false;
+  bool _serviceDisabled = false;
   String _workMode = 'Office';
   String? _locationError;
   LocationCapture? _location;
@@ -159,6 +170,7 @@ class _StaffLoginPageState extends State<StaffLoginPage>
 
       if (!serviceEnabled) {
         setState(() {
+          _serviceDisabled = true;
           _permanentlyDenied = false;
           _locationError =
               'Location services are turned off. Enable GPS and retry.';
@@ -166,6 +178,10 @@ class _StaffLoginPageState extends State<StaffLoginPage>
         });
         return;
       }
+
+      setState(() {
+        _serviceDisabled = false;
+      });
 
       if (permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse) {
@@ -223,12 +239,44 @@ class _StaffLoginPageState extends State<StaffLoginPage>
     }
   }
 
+  Future<void> _handleOpenLocationSettings() async {
+    try {
+      final opened = await widget.locationProvider.openLocationSettings();
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not open location settings automatically. Please turn on Location in system settings.',
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not open location settings automatically. Please turn on Location in system settings.',
+            ),
+          ),
+        );
+      }
+    }
+
+    if (mounted) {
+      await _recheckLocationStateAfterSettings();
+    }
+  }
+
   Future<void> _selectWorkMode(String mode) async {
     setState(() {
       _workMode = mode;
       _location = null;
       _locationError = null;
       _permanentlyDenied = false;
+      _serviceDisabled = false;
     });
   }
 
@@ -239,9 +287,15 @@ class _StaffLoginPageState extends State<StaffLoginPage>
       _locationError = null;
       _location = null;
       _permanentlyDenied = false;
+      _serviceDisabled = false;
     });
     try {
       if (!await widget.locationProvider.isLocationServiceEnabled()) {
+        if (mounted) {
+          setState(() {
+            _serviceDisabled = true;
+          });
+        }
         throw const _LocationMessage(
             'Location services are turned off. Enable GPS and retry.');
       }
@@ -276,6 +330,7 @@ class _StaffLoginPageState extends State<StaffLoginPage>
         final timestamp = position.timestamp.toUtc();
         setState(() {
           _permanentlyDenied = false;
+          _serviceDisabled = false;
           _locationError = null;
           _location = LocationCapture(
               latitude: position.latitude,
@@ -486,7 +541,11 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                           label: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text(_busy ? 'Signing In...' : 'Sign In'),
+                                Text(_busy
+                                    ? (_locating
+                                        ? 'Detecting Location...'
+                                        : 'Signing In...')
+                                    : 'Sign In'),
                                 const SizedBox(width: 7),
                                 if (!_busy) const Icon(Icons.login, size: 16)
                               ]),
@@ -561,7 +620,7 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                 if (!_locating && _location != null)
                   const Padding(
                       padding: EdgeInsets.only(top: 4),
-                      child: Text('✓ Location detected',
+                      child: Text('✓ Location captured',
                           style: TextStyle(
                               fontSize: 12, color: Color(0xff198754)))),
                 if (!_locating && _locationError != null)
@@ -576,6 +635,20 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                       onPressed: _handleOpenAppSettings,
                       icon: const Icon(Icons.settings_outlined, size: 15),
                       label: const Text('Open app settings'),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
+                if (!_locating && _serviceDisabled)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: TextButton.icon(
+                      key: const ValueKey('enable-location-services-button'),
+                      onPressed: _handleOpenLocationSettings,
+                      icon: const Icon(Icons.location_searching, size: 15),
+                      label: const Text('Enable location services'),
                       style: TextButton.styleFrom(
                         padding: EdgeInsets.zero,
                         visualDensity: VisualDensity.compact,
