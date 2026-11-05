@@ -9,17 +9,51 @@ const _blue = Color(0xff2864e8);
 const _ink = Color(0xff1b2638);
 const _muted = Color(0xff77849a);
 
+abstract class LoginLocationProvider {
+  Future<bool> isLocationServiceEnabled();
+  Future<LocationPermission> checkPermission();
+  Future<LocationPermission> requestPermission();
+  Future<Position> getCurrentPosition();
+  Future<bool> openAppSettings();
+}
+
+class DefaultLoginLocationProvider implements LoginLocationProvider {
+  const DefaultLoginLocationProvider();
+
+  @override
+  Future<bool> isLocationServiceEnabled() => Geolocator.isLocationServiceEnabled();
+
+  @override
+  Future<LocationPermission> checkPermission() => Geolocator.checkPermission();
+
+  @override
+  Future<LocationPermission> requestPermission() => Geolocator.requestPermission();
+
+  @override
+  Future<Position> getCurrentPosition() => Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 20),
+        ),
+      );
+
+  @override
+  Future<bool> openAppSettings() => Geolocator.openAppSettings();
+}
+
 class StaffLoginPage extends StatefulWidget {
   const StaffLoginPage({
     super.key,
     required this.selectedDepartment,
     required this.onSignIn,
     this.onBack,
+    this.locationProvider = const DefaultLoginLocationProvider(),
   });
   final String selectedDepartment;
   final Future<void> Function(String email, String password, String workMode,
       LocationCapture? location) onSignIn;
   final VoidCallback? onBack;
+  final LoginLocationProvider locationProvider;
 
   @override
   State<StaffLoginPage> createState() => _StaffLoginPageState();
@@ -66,54 +100,63 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
       _locating = true;
       _locationError = null;
       _location = null;
+      _permanentlyDenied = false;
     });
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
+      if (!await widget.locationProvider.isLocationServiceEnabled()) {
         throw const _LocationMessage(
             'Location services are turned off. Enable GPS and retry.');
       }
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied)
-        permission = await Geolocator.requestPermission();
+      var permission = await widget.locationProvider.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await widget.locationProvider.requestPermission();
+      }
       if (permission == LocationPermission.denied) {
         throw const _LocationMessage(
             'Location permission was denied. Allow location access and retry sign-in.');
       }
       if (permission == LocationPermission.deniedForever) {
-        setState(() => _permanentlyDenied = true);
+        if (mounted) {
+          setState(() => _permanentlyDenied = true);
+        }
         throw const _LocationMessage(
             'Location permission is blocked. Enable it in app settings, then retry sign-in.');
       }
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)),
-      );
+      final position = await widget.locationProvider.getCurrentPosition();
       if (!position.latitude.isFinite ||
           !position.longitude.isFinite ||
           !position.accuracy.isFinite ||
           position.latitude < -90 ||
           position.latitude > 90 ||
           position.longitude < -180 ||
-          position.longitude > 180) {
+          position.longitude > 180 ||
+          (position.latitude == 0.0 && position.longitude == 0.0)) {
         throw const _LocationMessage(
-            'GPS returned an invalid location. Please retry sign-in.');
+            'GPS returned invalid or placeholder coordinates. Please retry with a valid GPS lock.');
       }
-      if (mounted)
+      if (mounted) {
+        final timestamp = position.timestamp.toUtc();
         setState(() => _location = LocationCapture(
             latitude: position.latitude,
             longitude: position.longitude,
             accuracy: position.accuracy,
-            capturedAt: position.timestamp.toUtc(),
+            capturedAt: timestamp,
             address: 'Location captured'));
+      }
     } on _LocationMessage catch (error) {
-      if (mounted) setState(() => _locationError = error.message);
+      if (mounted) {
+        setState(() => _locationError = error.message);
+      }
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(() => _locationError = error is TimeoutException
-            ? 'Location detection timed out. Please retry.'
+            ? 'Location detection timed out. Please check your GPS signal and retry.'
             : 'Location is unavailable. Check GPS and app permission, then retry.');
+      }
     } finally {
-      if (mounted) setState(() => _locating = false);
+      if (mounted) {
+        setState(() => _locating = false);
+      }
     }
   }
 
@@ -138,16 +181,30 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
     }
     setState(() => _busy = true);
     try {
-      await _detectLocation();
-      if (_location == null) return;
-      await widget.onSignIn(email, password,
-          _workMode == 'Office' ? 'OFFICE' : 'WORK_FROM_HOME', _location);
+      if (_workMode == 'Work From Home') {
+        await _detectLocation();
+        if (_location == null) {
+          if (mounted && _locationError != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(_locationError!)));
+          }
+          return;
+        }
+      }
+
+      final workModeCode = _workMode == 'Office' ? 'OFFICE' : 'WORK_FROM_HOME';
+      final locationToSend = _workMode == 'Office' ? null : _location;
+
+      await widget.onSignIn(email, password, workModeCode, locationToSend);
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(error.toString().replaceFirst('Exception: ', ''))));
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 
@@ -230,7 +287,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                     ]),
                     const SizedBox(height: 7),
                     const Text(
-                      'GPS location is collected during sign in for attendance and work-location records.',
+                      'GPS location is collected during sign in for attendance and work-location records (required only for Work From Home).',
                       style: TextStyle(fontSize: 11, color: _muted),
                     ),
                     if (_workMode == 'Work From Home' ||
@@ -366,12 +423,15 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
                           fontSize: 12, color: Color(0xffc0392b))),
                 if (!_locating && _permanentlyDenied)
                   TextButton.icon(
-                      onPressed: Geolocator.openAppSettings,
+                      onPressed: widget.locationProvider.openAppSettings,
                       icon: const Icon(Icons.settings_outlined, size: 15),
                       label: const Text('Open app settings'),
                       style: TextButton.styleFrom(
                           padding: EdgeInsets.zero,
                           visualDensity: VisualDensity.compact)),
+                if (!_locating && _location == null && _locationError == null)
+                  const Text('Location will be captured when you sign in.',
+                      style: TextStyle(fontSize: 12, color: _muted)),
               ])),
           if (!_locating && _locationError != null)
             IconButton(

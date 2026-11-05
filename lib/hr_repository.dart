@@ -273,6 +273,9 @@ class HRRepositoryImpl implements HRRepository {
     if (workMode != 'OFFICE' && workMode != 'WORK_FROM_HOME') {
       throw Exception('Please select a valid work mode.');
     }
+    if (workMode == 'WORK_FROM_HOME' && location == null) {
+      throw Exception('GPS location is mandatory for Work From Home.');
+    }
 
     try {
       final body = <String, dynamic>{

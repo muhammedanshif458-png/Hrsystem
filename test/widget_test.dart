@@ -289,6 +289,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const StaffHubApp());
+    await tester.pumpAndSettle();
 
     expect(find.text('Choose Your Department'), findsOneWidget);
     await tester.tap(find.text('Tech'));

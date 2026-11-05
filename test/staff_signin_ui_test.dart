@@ -102,6 +102,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(const StaffHubApp());
+      await tester.pumpAndSettle();
 
       // Initial state: Department selection screen
       expect(find.text('Choose Your Department'), findsOneWidget);
@@ -205,6 +206,7 @@ void main() {
       String? capturedEmail;
       String? capturedPassword;
       String? capturedWorkMode;
+      dynamic capturedLocation;
 
       await tester.pumpWidget(MaterialApp(
         home: StaffLoginPage(
@@ -213,6 +215,7 @@ void main() {
             capturedEmail = email;
             capturedPassword = password;
             capturedWorkMode = workMode;
+            capturedLocation = location;
           },
         ),
       ));
@@ -222,12 +225,15 @@ void main() {
       await tester.enterText(
           find.widgetWithText(TextField, 'Enter your password'), 'MyPassword99');
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Sign In'));
+      final signInBtn = find.widgetWithText(FilledButton, 'Sign In');
+      await tester.ensureVisible(signInBtn);
+      await tester.tap(signInBtn);
       await tester.pumpAndSettle();
 
       expect(capturedEmail, 'alex@company.com');
       expect(capturedPassword, 'MyPassword99');
-      expect(capturedWorkMode, 'Office');
+      expect(capturedWorkMode, 'OFFICE');
+      expect(capturedLocation, isNull);
     });
   });
 
