@@ -124,8 +124,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
   bool _hidePassword = true;
   bool _busy = false;
   bool _locating = false;
-  bool _permanentlyDenied = false;
-  bool _serviceDisabled = false;
   String _workMode = 'Office';
   String? _locationError;
   LocationCapture? _location;
@@ -170,8 +168,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
 
       if (!serviceEnabled) {
         setState(() {
-          _serviceDisabled = true;
-          _permanentlyDenied = false;
           _locationError =
               'Location services are turned off. Enable GPS and retry.';
           _location = null;
@@ -179,27 +175,20 @@ class _StaffLoginPageState extends State<StaffLoginPage>
         return;
       }
 
-      setState(() {
-        _serviceDisabled = false;
-      });
-
       if (permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         setState(() {
-          _permanentlyDenied = false;
           _locationError = null;
         });
       } else if (permission == LocationPermission.denied) {
         setState(() {
-          _permanentlyDenied = false;
           _locationError =
               'Location permission was denied. Allow location access and retry sign-in.';
           _location = null;
         });
       } else if (permission == LocationPermission.deniedForever) {
         setState(() {
-          _permanentlyDenied = true;
           _locationError =
               'Location permission is blocked. Enable it in app settings, then retry sign-in.';
           _location = null;
@@ -275,8 +264,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
       _workMode = mode;
       _location = null;
       _locationError = null;
-      _permanentlyDenied = false;
-      _serviceDisabled = false;
     });
   }
 
@@ -286,16 +273,9 @@ class _StaffLoginPageState extends State<StaffLoginPage>
       _locating = true;
       _locationError = null;
       _location = null;
-      _permanentlyDenied = false;
-      _serviceDisabled = false;
     });
     try {
       if (!await widget.locationProvider.isLocationServiceEnabled()) {
-        if (mounted) {
-          setState(() {
-            _serviceDisabled = true;
-          });
-        }
         throw const _LocationMessage(
             'Location services are turned off. Enable GPS and retry.');
       }
@@ -308,9 +288,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
             'Location permission was denied. Allow location access and retry sign-in.');
       }
       if (permission == LocationPermission.deniedForever) {
-        if (mounted) {
-          setState(() => _permanentlyDenied = true);
-        }
         throw const _LocationMessage(
             'Location permission is blocked. Enable it in app settings, then retry sign-in.');
       }
@@ -329,8 +306,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
       if (mounted) {
         final timestamp = position.timestamp.toUtc();
         setState(() {
-          _permanentlyDenied = false;
-          _serviceDisabled = false;
           _locationError = null;
           _location = LocationCapture(
               latitude: position.latitude,
@@ -386,8 +361,26 @@ class _StaffLoginPageState extends State<StaffLoginPage>
         if (_location == null) {
           if (mounted && _locationError != null) {
             ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            final isBlocked = _locationError!.contains('app settings');
+            final isServiceDisabled = _locationError!.contains('turned off');
             ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(_locationError!)));
+              SnackBar(
+                content: Text(_locationError!),
+                action: isBlocked
+                    ? SnackBarAction(
+                        label: 'Settings',
+                        textColor: Colors.amber,
+                        onPressed: _handleOpenAppSettings,
+                      )
+                    : isServiceDisabled
+                        ? SnackBarAction(
+                            label: 'Settings',
+                            textColor: Colors.amber,
+                            onPressed: _handleOpenLocationSettings,
+                          )
+                        : null,
+              ),
+            );
           }
           return;
         }
@@ -492,11 +485,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
                       'GPS location is collected during sign in for attendance and work-location records (required only for Work From Home).',
                       style: TextStyle(fontSize: 11, color: _muted),
                     ),
-                    if (_workMode == 'Work From Home' ||
-                        _locationError != null) ...[
-                      const SizedBox(height: 11),
-                      _locationCard(),
-                    ],
                     const SizedBox(height: 16),
                     _label('Work Email'),
                     const SizedBox(height: 6),
@@ -584,89 +572,6 @@ class _StaffLoginPageState extends State<StaffLoginPage>
       ),
     );
   }
-
-  Widget _locationCard() => Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: const Color(0xffe4e9f1)),
-            borderRadius: BorderRadius.circular(10)),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Icon(Icons.location_on_outlined, color: _blue, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                const Text('Current Location',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: _ink)),
-                const SizedBox(height: 4),
-                if (_locating)
-                  const Row(children: [
-                    SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2)),
-                    SizedBox(width: 8),
-                    Text('Detecting location...',
-                        style: TextStyle(fontSize: 12, color: _muted))
-                  ]),
-                if (!_locating && _location != null)
-                  Text(_location!.address,
-                      style: const TextStyle(fontSize: 13, color: _ink)),
-                if (!_locating && _location != null)
-                  const Padding(
-                      padding: EdgeInsets.only(top: 4),
-                      child: Text('✓ Location captured',
-                          style: TextStyle(
-                              fontSize: 12, color: Color(0xff198754)))),
-                if (!_locating && _locationError != null)
-                  Text(_locationError!,
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xffc0392b))),
-                if (!_locating && _permanentlyDenied)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: TextButton.icon(
-                      key: const ValueKey('open-app-settings-button'),
-                      onPressed: _handleOpenAppSettings,
-                      icon: const Icon(Icons.settings_outlined, size: 15),
-                      label: const Text('Open app settings'),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ),
-                  ),
-                if (!_locating && _serviceDisabled)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: TextButton.icon(
-                      key: const ValueKey('enable-location-services-button'),
-                      onPressed: _handleOpenLocationSettings,
-                      icon: const Icon(Icons.location_searching, size: 15),
-                      label: const Text('Enable location services'),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ),
-                  ),
-                if (!_locating && _location == null && _locationError == null)
-                  const Text('Location will be captured when you sign in.',
-                      style: TextStyle(fontSize: 12, color: _muted)),
-              ])),
-          if (!_locating && _locationError != null)
-            IconButton(
-                onPressed: _detectLocation,
-                tooltip: 'Retry location detection',
-                icon: const Icon(Icons.refresh, size: 19, color: _blue),
-                visualDensity: VisualDensity.compact),
-        ]),
-      );
 
   Widget _label(String text) => Text(text,
       style: const TextStyle(

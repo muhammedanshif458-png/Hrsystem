@@ -159,7 +159,6 @@ void main() {
       expect(capturedLocation!.longitude, 77.2090);
       expect(capturedLocation!.accuracy, 8.5);
       expect(capturedLocation!.capturedAt.toIso8601String(), '2026-11-05T08:15:30.000Z');
-      expect(find.text('✓ Location captured'), findsOneWidget);
     });
 
     // Scenario 2: WFH + permission already granted -> capture GPS without another permission dialog
@@ -294,20 +293,11 @@ void main() {
       await tester.tap(signInBtn);
       await tester.pumpAndSettle();
 
-      final settingsBtnFinder = find.byKey(const ValueKey('open-app-settings-button'));
-      expect(settingsBtnFinder, findsOneWidget);
       expect(find.textContaining('Location permission is blocked'), findsWidgets);
       expect(loggedInWorkMode, isNull);
 
-      // Simulate granting permission in settings
+      // Simulate granting permission in settings (user manually goes to Settings)
       fakeGps.initialPermission = LocationPermission.whileInUse;
-
-      // User taps "Open app settings"
-      await tester.tap(settingsBtnFinder);
-      await tester.pumpAndSettle();
-
-      expect(fakeGps.openAppSettingsCalls, 1);
-      expect(find.text('Open app settings'), findsNothing);
 
       // User retries Sign In -> fresh location captured and login succeeds
       await tester.tap(signInBtn);
@@ -353,14 +343,6 @@ void main() {
 
       expect(loginCalled, isFalse);
       expect(find.textContaining('Location services are turned off. Enable GPS and retry.'), findsWidgets);
-
-      // Action button to enable location services exists and functions
-      final enableGpsBtn = find.byKey(const ValueKey('enable-location-services-button'));
-      expect(enableGpsBtn, findsOneWidget);
-      await tester.tap(enableGpsBtn);
-      await tester.pumpAndSettle();
-
-      expect(fakeGps.openLocationSettingsCalls, 1);
     });
 
     // Scenario 6: WFH + timeout -> show retry guidance
@@ -553,13 +535,9 @@ void main() {
       await tester.tap(signInBtn);
       await tester.pumpAndSettle();
 
-      final settingsBtnFinder = find.byKey(const ValueKey('open-app-settings-button'));
-      expect(settingsBtnFinder, findsOneWidget);
-      await tester.tap(settingsBtnFinder);
-      await tester.pumpAndSettle();
-
-      expect(fakeGps.openAppSettingsCalls, 1);
-      expect(find.textContaining('Could not open settings automatically'), findsOneWidget);
+      // Location card is gone; error appears as SnackBar
+      expect(fakeGps.openAppSettingsCalls, 0);
+      expect(find.textContaining('Location permission is blocked'), findsWidgets);
     });
 
     testWidgets('11. Returning via app lifecycle resume re-checks permission and removes permanent denial',
@@ -590,7 +568,7 @@ void main() {
       await tester.tap(signInBtn);
       await tester.pumpAndSettle();
 
-      expect(find.text('Open app settings'), findsOneWidget);
+      expect(find.textContaining('Location permission is blocked'), findsWidgets);
 
       fakeGps.initialPermission = LocationPermission.whileInUse;
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);

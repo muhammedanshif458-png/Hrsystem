@@ -191,8 +191,8 @@ void main() {
       await tester.tap(find.text('Work From Home'));
       await tester.pump();
 
-      // Shows location detection card
-      expect(find.text('Current Location'), findsOneWidget);
+      // Location card is not shown (removed from UI)
+      expect(find.text('Current Location'), findsNothing);
 
       // Switch back to Office
       await tester.tap(find.text('Office'));
