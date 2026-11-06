@@ -629,7 +629,12 @@ class HRRepositoryImpl implements HRRepository {
           break;
         }
       }
-      final response = await _api.delete(ApiConfig.attendanceClearHistory);
+      dynamic response;
+      try {
+        response = await _api.delete(ApiConfig.attendanceClearHistory);
+      } catch (_) {
+        response = await _api.post(ApiConfig.attendanceClearHistoryPost, body: {});
+      }
       if (response is! Map || response['success'] != true) {
         throw const FormatException(
             'Server did not confirm attendance history clearing.');

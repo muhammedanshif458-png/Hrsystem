@@ -234,20 +234,18 @@ class Attendance {
   final int? gracePeriodMinutes;
   final Map<String, dynamic>? activeBreak;
 
-  bool get isOngoing =>
-      sessionStatus == 'IN_PROGRESS' ||
-      ((checkInAt != null || checkInTime.isNotEmpty) &&
-          checkOutAt == null &&
-          (checkOutTime == null ||
-              checkOutTime!.isEmpty ||
-              checkOutTime == 'Pending'));
-
   bool get isCompleted =>
       sessionStatus == 'COMPLETED' ||
-      (checkOutAt != null ||
-          (checkOutTime != null &&
-              checkOutTime!.isNotEmpty &&
-              checkOutTime != 'Pending'));
+      checkOutAt != null ||
+      (checkOutTime != null &&
+          checkOutTime!.isNotEmpty &&
+          checkOutTime != 'Pending');
+
+  bool get isOngoing =>
+      !isCompleted &&
+      (sessionStatus == 'IN_PROGRESS' ||
+          checkInAt != null ||
+          checkInTime.isNotEmpty);
 
   String get displayStatus {
     if (isLate || status.toUpperCase() == 'LATE') return 'Late';
@@ -328,7 +326,7 @@ class Attendance {
     String inTime = '';
     if (json['checkInTime'] != null &&
         json['checkInTime'].toString().isNotEmpty) {
-      inTime = json['checkInTime'].toString();
+      inTime = formatShiftTime(json['checkInTime'].toString());
     } else if (inAt != null) {
       inTime = _formatTimeOfDay(inAt);
     }
@@ -336,7 +334,12 @@ class Attendance {
     String? outTime;
     if (json['checkOutTime'] != null &&
         json['checkOutTime'].toString().isNotEmpty) {
-      outTime = json['checkOutTime'].toString();
+      final rawOut = json['checkOutTime'].toString();
+      if (rawOut.toLowerCase() == 'pending') {
+        outTime = 'Pending';
+      } else {
+        outTime = formatShiftTime(rawOut);
+      }
     } else if (outAt != null) {
       outTime = _formatTimeOfDay(outAt);
     }
@@ -585,10 +588,24 @@ class Attendance {
   }
 }
 
-/// Formats a 24-hour time string (e.g. '10:00', '18:00', '09:00', '9:00 AM') into standard 12-hour format with leading zero ('10:00 AM', '06:00 PM', '09:00 AM').
+/// Formats a 24-hour time string (e.g. '10:00', '18:00', '09:00', '9:00 AM') or ISO timestamp (e.g. '2026-11-06T05:24:39.985Z') into standard 12-hour format with leading zero ('10:00 AM', '06:00 PM', '09:00 AM').
 String formatShiftTime(String timeStr) {
   final trimmed = timeStr.trim();
   if (trimmed.isEmpty) return '';
+
+  // Handle ISO 8601 or date-time strings (e.g. 2026-11-06T05:24:39.985Z or 2026-11-06 05:24:39)
+  if (trimmed.contains('T') || (trimmed.contains('-') && trimmed.contains(':'))) {
+    final parsed = DateTime.tryParse(trimmed);
+    if (parsed != null) {
+      final local = parsed.toLocal();
+      final h = local.hour;
+      final m = local.minute;
+      final period = h >= 12 ? 'PM' : 'AM';
+      final h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+      return '${h12.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')} $period';
+    }
+  }
+
   final upper = trimmed.toUpperCase();
   if (upper.contains('AM') || upper.contains('PM')) {
     final match = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', caseSensitive: false)

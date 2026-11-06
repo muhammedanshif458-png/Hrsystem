@@ -2447,7 +2447,7 @@ class _AttendanceDetailBottomSheetState
 }
 
 String _formatDisplayDate(String isoOrDate) {
-  final d = DateTime.tryParse(isoOrDate);
+  final d = DateTime.tryParse(isoOrDate)?.toLocal();
   if (d == null) return isoOrDate;
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const months = [
@@ -2473,7 +2473,7 @@ String _formatDisplayDate(String isoOrDate) {
 }
 
 String _formatDateString(String iso) {
-  final d = DateTime.tryParse(iso);
+  final d = DateTime.tryParse(iso)?.toLocal();
   if (d == null) return iso;
   const months = [
     '',

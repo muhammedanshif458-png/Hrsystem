@@ -431,5 +431,82 @@ void main() {
       // Default scheduled check-in for Telecalling is 09:00 AM
       expect(find.text('09:00 AM'), findsWidgets);
     });
+
+    testWidgets(
+        '8. ISO timestamps (e.g. 2026-11-06T05:24:39.985Z) are formatted into local human-readable time',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      const rawIsoCheckIn = '2026-11-06T05:24:39.985Z';
+      final expectedLocalTime = formatShiftTime(rawIsoCheckIn);
+      expect(expectedLocalTime.contains('T'), isFalse);
+      expect(expectedLocalTime.contains('Z'), isFalse);
+      expect(expectedLocalTime.contains('AM') || expectedLocalTime.contains('PM'), isTrue);
+
+      final jsonPayload = {
+        '_id': 'att_iso_test_1',
+        'employee': 'staff_att_01',
+        'date': '2026-11-06T00:00:00.000Z',
+        'checkInTime': rawIsoCheckIn,
+        'checkOutTime': '2026-11-06T12:30:00.000Z',
+        'status': 'PRESENT',
+        'sessionStatus': 'COMPLETED',
+        'workMode': 'Office',
+        'department': 'Tech',
+      };
+      final parsed = Attendance.fromJson(jsonPayload);
+      expect(parsed.checkInTime, equals(expectedLocalTime));
+      expect(parsed.isCompleted, isTrue);
+      expect(parsed.isOngoing, isFalse);
+
+      final repository = MockHRRepository();
+      repository.attendanceList.value = [parsed];
+
+      await tester.pumpWidget(buildTestShell(repository: repository));
+      await tester.pumpAndSettle();
+
+      // UI should display local time formatted string, never the raw ISO
+      expect(find.textContaining(rawIsoCheckIn), findsNothing);
+      expect(find.text('In: $expectedLocalTime'), findsOneWidget);
+
+      // Open detail sheet
+      await tester.tap(find.text('In: $expectedLocalTime'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Attendance Details'), findsOneWidget);
+      expect(find.textContaining(rawIsoCheckIn), findsNothing);
+    });
+
+    testWidgets(
+        '9. Completed record never displays In Progress badge',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      const completedRecord = Attendance(
+        id: 'att_comp_guard',
+        staffId: 'staff_att_01',
+        date: '2026-11-06',
+        checkInTime: '10:00 AM',
+        checkOutTime: '06:00 PM',
+        status: 'PRESENT',
+        sessionStatus: 'COMPLETED',
+      );
+      expect(completedRecord.isCompleted, isTrue);
+      expect(completedRecord.isOngoing, isFalse);
+      expect(completedRecord.sessionStatusLabel, equals('Completed'));
+
+      final repository = MockHRRepository();
+      repository.attendanceList.value = [completedRecord];
+
+      await tester.pumpWidget(buildTestShell(repository: repository));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('In Progress'), findsNothing);
+    });
   });
 }
