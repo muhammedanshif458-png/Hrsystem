@@ -2655,6 +2655,24 @@ class _LeavePageState extends State<_LeavePage> {
             content: Text('Reason must be between 5 and 500 characters.')));
         return;
       }
+      if (_type == 'Medical Leave') {
+        final hasProof = (_medicalProofBytes != null &&
+                _medicalProofBytes!.isNotEmpty) ||
+            (_medicalProofName != null && _medicalProofName!.isNotEmpty);
+        if (!hasProof) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'Medical proof document is required for Medical Leave.')),
+          );
+          return;
+        }
+      }
+
+      final hasAttachment = (_type == 'Medical Leave' || _type == 'Sick Leave') &&
+          ((_medicalProofBytes != null && _medicalProofBytes!.isNotEmpty) ||
+              (_medicalProofName != null && _medicalProofName!.isNotEmpty));
+
       // Submit to repository
       await widget.repository.requestLeave(
         staffId: widget.staffId,
@@ -2664,12 +2682,12 @@ class _LeavePageState extends State<_LeavePage> {
             '${_endDate.year}-${_endDate.month.toString().padLeft(2, '0')}-${_endDate.day.toString().padLeft(2, '0')}',
         reason: _reasonController.text.trim(),
         type: _type,
-        documentName: _type == 'Medical Leave' ? _medicalProofName : null,
-        documentBytes: _type == 'Medical Leave' ? _medicalProofBytes : null,
+        documentName: hasAttachment ? _medicalProofName : null,
+        documentBytes: hasAttachment ? _medicalProofBytes : null,
       );
 
       // Cache uploaded doc bytes keyed by request id so detail sheet can show them
-      if (_type == 'Medical Leave' && _medicalProofBytes != null) {
+      if (hasAttachment && _medicalProofBytes != null) {
         final latestReq = widget.repository.leaveRequests.value
                 .where((r) => r.reason == _reasonController.text.trim())
                 .firstOrNull ??
@@ -2685,8 +2703,8 @@ class _LeavePageState extends State<_LeavePage> {
         dates:
             '${_formatDate(_startDate)} – ${_formatDate(_endDate)} · $_leaveDays ${_leaveDays == 1 ? 'Day' : 'Days'}',
         reason: _reasonController.text.trim(),
-        documentName: _type == 'Medical Leave' ? _medicalProofName : null,
-        documentPath: _type == 'Medical Leave' ? _medicalProofPath : null,
+        documentName: hasAttachment ? _medicalProofName : null,
+        documentPath: hasAttachment ? _medicalProofPath : null,
       ));
       // Reset form ONLY on success
       setState(() {
@@ -2871,35 +2889,49 @@ class _LeavePageState extends State<_LeavePage> {
                                 'Apply at least 3 working days in advance.',
                               'Earned Leave' =>
                                 'Apply at least 7 calendar days in advance.',
-                              'Sick Leave' => 'Submit as soon as possible.',
+                              'Sick Leave' =>
+                                'Submit as soon as possible. Medical proof is optional.',
+                              'Medical Leave' =>
+                                'Submit as soon as possible. Medical proof is required.',
                               _ =>
-                                'Submit as soon as possible. Attach medical proof when available.',
+                                'Submit as soon as possible.',
                             },
                             style: TextStyle(fontSize: 11, color: mutedColor)),
-                        if (_type == 'Medical Leave') ...[
+                        if (_type == 'Medical Leave' || _type == 'Sick Leave') ...[
                           const SizedBox(height: 12),
-                          _smallLabel('Medical Document', color: mutedColor),
+                          _smallLabel(
+                            _type == 'Medical Leave'
+                                ? 'Medical Document (Required)'
+                                : 'Medical Document (Optional)',
+                            color: mutedColor,
+                          ),
                           const SizedBox(height: 6),
                           if (_medicalProofName == null)
-                            Text('Medical document not uploaded',
-                                style:
-                                    TextStyle(fontSize: 12, color: mutedColor)),
+                            Text(
+                              _type == 'Medical Leave'
+                                  ? 'Medical document not uploaded'
+                                  : 'No document attached (Optional)',
+                              style:
+                                  TextStyle(fontSize: 12, color: mutedColor),
+                            ),
                           Wrap(
                               spacing: 8,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 OutlinedButton.icon(
                                     onPressed: _pickMedicalProof,
-                                    icon: Icon(Icons.attach_file, size: 17),
+                                    icon: const Icon(Icons.attach_file, size: 17),
                                     label: Text(_medicalProofName == null
-                                        ? 'Attach Medical Proof'
+                                        ? (_type == 'Medical Leave'
+                                            ? 'Attach Medical Proof'
+                                            : 'Attach Proof (Optional)')
                                         : 'Change Document')),
                                 if (_medicalProofName != null)
                                   OutlinedButton.icon(
                                       onPressed: _previewMedicalProof,
-                                      icon: Icon(Icons.visibility_outlined,
+                                      icon: const Icon(Icons.visibility_outlined,
                                           size: 17),
-                                      label: Text('View Document')),
+                                      label: const Text('View Document')),
                                 if (_medicalProofName != null)
                                   IconButton(
                                       tooltip: 'Remove document',
@@ -2908,7 +2940,7 @@ class _LeavePageState extends State<_LeavePage> {
                                             _medicalProofPath = null;
                                             _medicalProofBytes = null;
                                           }),
-                                      icon: Icon(Icons.close, size: 18)),
+                                      icon: const Icon(Icons.close, size: 18)),
                               ]),
                           if (_medicalProofName != null)
                             Padding(
@@ -3358,7 +3390,10 @@ class _LeaveDetailSheet extends StatelessWidget {
                       const SizedBox(height: 6),
                       Divider(color: _line),
                       const SizedBox(height: 6),
-                      Text('Medical Document',
+                      Text(
+                          request.type == 'Medical Leave'
+                              ? 'Medical Document'
+                              : 'Supporting Document',
                           style: TextStyle(
                               fontSize: 11,
                               color: _muted,
@@ -3390,7 +3425,10 @@ class _LeaveDetailSheet extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    request.documentName ?? 'Medical Document',
+                                    request.documentName ??
+                                        (request.type == 'Medical Leave'
+                                            ? 'Medical Document'
+                                            : 'Supporting Document'),
                                     style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,

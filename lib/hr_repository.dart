@@ -811,6 +811,15 @@ class HRRepositoryImpl implements HRRepository {
   Attendance _attendanceFromJson(Map<String, dynamic> j) =>
       Attendance.fromJson(j);
 
+  @visibleForTesting
+  String mapLeaveTypeToBackend(String t) => _mapLeaveTypeToBackend(t);
+
+  @visibleForTesting
+  String mapBackendLeaveTypeToUi(String? backendType,
+          {String? displayType, bool hasDoc = false}) =>
+      _mapBackendLeaveTypeToUi(backendType,
+          displayType: displayType, hasDoc: hasDoc);
+
   String _mapLeaveTypeToBackend(String t) {
     switch (t.trim().toUpperCase()) {
       case 'CASUAL LEAVE':
@@ -820,10 +829,12 @@ class HRRepositoryImpl implements HRRepository {
       case 'SICK':
         return 'SICK';
       case 'MEDICAL LEAVE':
-        return 'SICK';
+      case 'MEDICAL':
+        return 'MEDICAL';
       case 'EARNED LEAVE':
       case 'ANNUAL LEAVE':
       case 'ANNUAL':
+      case 'EARNED':
         return 'ANNUAL';
       case 'UNPAID LEAVE':
       case 'UNPAID':
@@ -835,13 +846,26 @@ class HRRepositoryImpl implements HRRepository {
     }
   }
 
-  String _mapBackendLeaveTypeToUi(String? backendType, {bool hasDoc = false}) {
+  String _mapBackendLeaveTypeToUi(String? backendType,
+      {String? displayType, bool hasDoc = false}) {
+    if (displayType != null && displayType.trim().isNotEmpty) {
+      final dt = displayType.trim().toUpperCase();
+      if (dt == 'SICK LEAVE' || dt == 'SICK') return 'Sick Leave';
+      if (dt == 'MEDICAL LEAVE' || dt == 'MEDICAL') return 'Medical Leave';
+      if (dt == 'CASUAL LEAVE' || dt == 'CASUAL') return 'Casual Leave';
+      if (dt == 'EARNED LEAVE' || dt == 'ANNUAL LEAVE' || dt == 'EARNED' || dt == 'ANNUAL') return 'Earned Leave';
+      if (dt == 'UNPAID LEAVE' || dt == 'UNPAID') return 'Unpaid Leave';
+      if (dt == 'OTHER') return 'Other';
+    }
     switch (backendType?.trim().toUpperCase()) {
       case 'CASUAL':
         return 'Casual Leave';
       case 'SICK':
-        return hasDoc ? 'Medical Leave' : 'Sick Leave';
+        return 'Sick Leave';
+      case 'MEDICAL':
+        return 'Medical Leave';
       case 'ANNUAL':
+      case 'EARNED':
         return 'Earned Leave';
       case 'UNPAID':
         return 'Unpaid Leave';
@@ -896,6 +920,7 @@ class HRRepositoryImpl implements HRRepository {
               docId = e['documentId']?.toString();
             }
             final rawType = e['leaveType'] as String?;
+            final displayType = e['leaveTypeDisplay'] as String?;
             final rawStatus = e['status'] as String?;
             final staffObj = e['staff'] ?? e['employee'];
             String parsedStaffId = '';
@@ -922,6 +947,7 @@ class HRRepositoryImpl implements HRRepository {
               toDate: e['endDate'] ?? '',
               reason: e['reason'] ?? '',
               type: _mapBackendLeaveTypeToUi(rawType,
+                  displayType: displayType,
                   hasDoc: resolvedDocName != null ||
                       docUrl != null ||
                       docId != null),
@@ -974,7 +1000,10 @@ class HRRepositoryImpl implements HRRepository {
           fields: fields,
           fileFieldName: 'file',
           fileBytes: documentBytes,
-          fileName: documentName ?? 'medical_certificate.pdf',
+          fileName: documentName ??
+              (backendLeaveType == 'SICK'
+                  ? 'medical_proof.pdf'
+                  : 'medical_certificate.pdf'),
         );
         if (response['success'] == true) {
           await fetchStaffLeaves();
