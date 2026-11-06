@@ -1240,23 +1240,8 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
                       ]),
                     ],
                   ]))),
-      const SizedBox(height: 18),
-      _ProfileCard(
-          child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle(Icons.campaign_outlined, 'HR Notice',
-                        trailing: 'Today'),
-                    const SizedBox(height: 14),
-                    Text(
-                        'Office will start at 9:30 AM tomorrow for scheduled infrastructure maintenance.',
-                        style: TextStyle(
-                            fontSize: 13, color: _muted, height: 1.45))
-                  ]))),
       if (activeLeave != null) ...[
-        const SizedBox(height: 12),
+        const SizedBox(height: 18),
         _ProfileCard(
             child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1501,18 +1486,6 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
         ),
       );
 }
-
-Color _workStatusBackground(String status) => switch (status) {
-      'Completed' => const Color(0xffe8f8ef),
-      'In Progress' => const Color(0xffeaf0ff),
-      _ => const Color(0xfffff4d6),
-    };
-
-Color _workStatusForeground(String status) => switch (status) {
-      'Completed' => const Color(0xff198754),
-      'In Progress' => _blue,
-      _ => const Color(0xffb7791f),
-    };
 
 class _PunchPage extends StatefulWidget {
   const _PunchPage(
@@ -4989,17 +4962,6 @@ Widget _pill(String text, Color bg, Color fg) => Container(
     child: Text(text,
         style:
             TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w600)));
-Widget _sectionTitle(IconData icon, String text, {String? trailing}) =>
-    Row(children: [
-      Icon(icon, size: 13, color: _blue),
-      const SizedBox(width: 5),
-      Expanded(
-          child: Text(text,
-              style: TextStyle(
-                  fontSize: 13, color: _ink, fontWeight: FontWeight.w700))),
-      if (trailing != null)
-        Text(trailing, style: TextStyle(fontSize: 10, color: _blue))
-    ]);
 Widget _timeline(IconData icon, String title, String subtitle, String time,
         Color color) =>
     Row(children: [
