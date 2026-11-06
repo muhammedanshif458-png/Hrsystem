@@ -122,6 +122,10 @@ class AttendanceBreak {
     required this.startTime,
     this.endTime,
     this.durationSeconds = 0,
+    this.durationMinutes,
+    this.remarks = '',
+    this.isActiveServer,
+    this.isCompletedServer,
   });
 
   final String id;
@@ -130,8 +134,12 @@ class AttendanceBreak {
   final DateTime startTime;
   final DateTime? endTime;
   final int durationSeconds;
-  bool get isActive => endTime == null;
-  bool get isCompleted => endTime != null;
+  final int? durationMinutes;
+  final String remarks;
+  final bool? isActiveServer;
+  final bool? isCompletedServer;
+  bool get isActive => isActiveServer ?? (endTime == null);
+  bool get isCompleted => isCompletedServer ?? (endTime != null);
   static int allowanceSecondsFor(String breakType) =>
       AttendanceBreakSchedule.durationMinutesFor(breakType) * 60;
   int get allowanceSeconds => allowanceSecondsFor(breakType);
@@ -190,6 +198,12 @@ class Attendance {
     this.scheduledCheckOut,
     this.scheduleStatus,
     this.scheduleConfigured,
+    this.workMode,
+    this.sessionStatus,
+    this.totalBreakMinutes,
+    this.numberOfBreaks,
+    this.gracePeriodMinutes,
+    this.activeBreak,
   });
 
   final String id;
@@ -213,6 +227,38 @@ class Attendance {
   final String? scheduledCheckOut;
   final String? scheduleStatus;
   final bool? scheduleConfigured;
+  final String? workMode;
+  final String? sessionStatus;
+  final int? totalBreakMinutes;
+  final int? numberOfBreaks;
+  final int? gracePeriodMinutes;
+  final Map<String, dynamic>? activeBreak;
+
+  bool get isOngoing =>
+      sessionStatus == 'IN_PROGRESS' ||
+      ((checkInAt != null || checkInTime.isNotEmpty) &&
+          checkOutAt == null &&
+          (checkOutTime == null ||
+              checkOutTime!.isEmpty ||
+              checkOutTime == 'Pending'));
+
+  bool get isCompleted =>
+      sessionStatus == 'COMPLETED' ||
+      (checkOutAt != null ||
+          (checkOutTime != null &&
+              checkOutTime!.isNotEmpty &&
+              checkOutTime != 'Pending'));
+
+  String get displayStatus {
+    if (isLate || status.toUpperCase() == 'LATE') return 'Late';
+    if (status.toUpperCase() == 'PRESENT') return 'Present';
+    if (status.toUpperCase() == 'HALF_DAY') return 'Half Day';
+    if (status.toUpperCase() == 'ABSENT') return 'Absent';
+    return status.isNotEmpty ? status : 'Present';
+  }
+
+  String get sessionStatusLabel =>
+      isOngoing ? 'In Progress' : (isCompleted ? 'Completed' : 'Pending');
 
   bool get isOnBreak => breakStartedAt != null || breaks.any((b) => b.isActive);
 
@@ -318,15 +364,24 @@ class Attendance {
                   DateTime.now();
           final bEnd =
               DateTime.tryParse(bm['endTime']?.toString() ?? '')?.toLocal();
+          final bMinutes = bm['durationMinutes'] is num
+              ? (bm['durationMinutes'] as num).toInt()
+              : int.tryParse(bm['durationMinutes']?.toString() ?? '');
           parsedBreaks.add(AttendanceBreak(
             id: bm['id']?.toString() ?? bm['_id']?.toString() ?? '',
             attendanceId: bm['attendanceId']?.toString() ?? id,
-            breakType: bm['breakType']?.toString() ?? 'lunch',
+            breakType: bm['breakType']?.toString() ?? bm['type']?.toString() ?? 'lunch',
             startTime: bStart,
             endTime: bEnd,
-            durationSeconds: bEnd == null
-                ? 0
-                : bEnd.difference(bStart).inSeconds.clamp(0, 1 << 31),
+            durationSeconds: bm['durationSeconds'] is num
+                ? (bm['durationSeconds'] as num).toInt()
+                : (bEnd == null
+                    ? 0
+                    : bEnd.difference(bStart).inSeconds.clamp(0, 1 << 31)),
+            durationMinutes: bMinutes,
+            remarks: bm['remarks']?.toString() ?? '',
+            isActiveServer: bm['isActive'] as bool?,
+            isCompletedServer: bm['isCompleted'] as bool?,
           ));
         }
       }
@@ -365,6 +420,21 @@ class Attendance {
     final rawDepartment = json['department'] ??
         (rawEmployee is Map ? rawEmployee['department'] : null);
     final rawMinutesLate = json['minutesLate'];
+    final rawWorkMode = json['workMode']?.toString();
+    final rawSessionStatus = json['sessionStatus']?.toString();
+    final rawTotalBreakMins = json['totalBreakMinutes'] is num
+        ? (json['totalBreakMinutes'] as num).toInt()
+        : int.tryParse(json['totalBreakMinutes']?.toString() ?? '');
+    final rawNumBreaks = json['numberOfBreaks'] is num
+        ? (json['numberOfBreaks'] as num).toInt()
+        : int.tryParse(json['numberOfBreaks']?.toString() ?? '');
+    final rawGrace = json['gracePeriodMinutes'] is num
+        ? (json['gracePeriodMinutes'] as num).toInt()
+        : int.tryParse(json['gracePeriodMinutes']?.toString() ?? '');
+    final rawActiveBreak = json['activeBreak'] is Map
+        ? Map<String, dynamic>.from(json['activeBreak'] as Map)
+        : null;
+
     return Attendance(
       id: id,
       staffId: resolvedStaffId,
@@ -399,6 +469,12 @@ class Attendance {
           resolvedScheduleSnapshot?['scheduleStatus']?.toString(),
       scheduleConfigured: rawScheduleConfigured ??
           (resolvedScheduleSnapshot?['scheduleConfigured'] as bool?),
+      workMode: rawWorkMode,
+      sessionStatus: rawSessionStatus,
+      totalBreakMinutes: rawTotalBreakMins,
+      numberOfBreaks: rawNumBreaks,
+      gracePeriodMinutes: rawGrace,
+      activeBreak: rawActiveBreak,
     );
   }
 
@@ -424,6 +500,13 @@ class Attendance {
         if (scheduleStatus != null) 'scheduleStatus': scheduleStatus,
         if (scheduleConfigured != null)
           'scheduleConfigured': scheduleConfigured,
+        if (workMode != null) 'workMode': workMode,
+        if (sessionStatus != null) 'sessionStatus': sessionStatus,
+        if (totalBreakMinutes != null) 'totalBreakMinutes': totalBreakMinutes,
+        if (numberOfBreaks != null) 'numberOfBreaks': numberOfBreaks,
+        if (gracePeriodMinutes != null)
+          'gracePeriodMinutes': gracePeriodMinutes,
+        if (activeBreak != null) 'activeBreak': activeBreak,
         'breaks': breaks
             .map((b) => {
                   'id': b.id,
@@ -432,6 +515,9 @@ class Attendance {
                   'startTime': b.startTime.toIso8601String(),
                   'endTime': b.endTime?.toIso8601String(),
                   'durationSeconds': b.durationSeconds,
+                  if (b.durationMinutes != null)
+                    'durationMinutes': b.durationMinutes,
+                  if (b.remarks.isNotEmpty) 'remarks': b.remarks,
                 })
             .toList(),
       };
@@ -459,6 +545,12 @@ class Attendance {
     String? scheduledCheckOut,
     String? scheduleStatus,
     bool? scheduleConfigured,
+    String? workMode,
+    String? sessionStatus,
+    int? totalBreakMinutes,
+    int? numberOfBreaks,
+    int? gracePeriodMinutes,
+    Map<String, dynamic>? activeBreak,
   }) {
     return Attendance(
       id: id ?? this.id,
@@ -483,6 +575,12 @@ class Attendance {
       scheduledCheckOut: scheduledCheckOut ?? this.scheduledCheckOut,
       scheduleStatus: scheduleStatus ?? this.scheduleStatus,
       scheduleConfigured: scheduleConfigured ?? this.scheduleConfigured,
+      workMode: workMode ?? this.workMode,
+      sessionStatus: sessionStatus ?? this.sessionStatus,
+      totalBreakMinutes: totalBreakMinutes ?? this.totalBreakMinutes,
+      numberOfBreaks: numberOfBreaks ?? this.numberOfBreaks,
+      gracePeriodMinutes: gracePeriodMinutes ?? this.gracePeriodMinutes,
+      activeBreak: activeBreak ?? this.activeBreak,
     );
   }
 }

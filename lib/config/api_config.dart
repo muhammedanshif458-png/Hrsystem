@@ -72,6 +72,10 @@ class ApiConfig {
   static const String attendanceCheckIn  = '/staff/attendance/check-in';
   static const String attendanceCheckOut = '/staff/attendance/check-out';
   static const String attendance         = '/staff/attendance';
+  static String attendanceDetail(String attendanceId) =>
+      '/staff/attendance/$attendanceId';
+  static const String attendanceClearHistory = '/staff/attendance/history';
+  static const String attendanceClearHistoryPost = '/staff/attendance/clear-history';
   static String attendanceBreakStart(String attendanceId) =>
       '/staff/attendance/$attendanceId/breaks/start';
   static String attendanceBreakEnd(String attendanceId) =>

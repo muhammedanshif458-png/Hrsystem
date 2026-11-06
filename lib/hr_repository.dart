@@ -48,6 +48,8 @@ abstract class HRRepository {
   Future<void> updateProfile({String? phone, String? address});
 
   Future<void> fetchStaffAttendance();
+  Future<Attendance> fetchAttendanceDetail(String attendanceId);
+  Future<void> clearAttendanceHistory();
   Future<Attendance> checkIn(String staffId);
   Future<void> checkOut(String attendanceId);
   Future<void> toggleBreak(String attendanceId, {String? breakType});
@@ -592,6 +594,54 @@ class HRRepositoryImpl implements HRRepository {
       await _saveAttendance();
     } catch (e) {
       debugPrint('fetchStaffAttendance error: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<Attendance> fetchAttendanceDetail(String attendanceId) async {
+    try {
+      final response = await _api.get(ApiConfig.attendanceDetail(attendanceId));
+      if (response is! Map ||
+          response['success'] != true ||
+          response['data'] is! Map) {
+        throw const FormatException(
+            'Malformed attendance detail response from server.');
+      }
+      return Attendance.fromJson(
+        Map<String, dynamic>.from(response['data'] as Map),
+        staffId: currentUser.value?.id,
+      );
+    } catch (e) {
+      debugPrint('fetchAttendanceDetail error: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> clearAttendanceHistory() async {
+    try {
+      // Find active session for today if any (ongoing shift must not be cleared)
+      Attendance? activeSession;
+      for (final a in attendanceList.value) {
+        if (a.isOngoing) {
+          activeSession = a;
+          break;
+        }
+      }
+      final response = await _api.delete(ApiConfig.attendanceClearHistory);
+      if (response is! Map || response['success'] != true) {
+        throw const FormatException(
+            'Server did not confirm attendance history clearing.');
+      }
+      await fetchStaffAttendance();
+      if (activeSession != null &&
+          !attendanceList.value.any((a) => a.id == activeSession!.id)) {
+        attendanceList.value = [activeSession, ...attendanceList.value];
+        await _saveAttendance();
+      }
+    } catch (e) {
+      debugPrint('clearAttendanceHistory error: $e');
       rethrow;
     }
   }

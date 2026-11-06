@@ -127,6 +127,7 @@ class _AppPagesState extends State<_AppPages> {
             _workLocation = null;
             _loggedIn = true;
           });
+          
         },
       );
     }

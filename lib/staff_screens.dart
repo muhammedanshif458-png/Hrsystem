@@ -407,6 +407,9 @@ class _StaffHubShellState extends State<StaffHubShell> {
         attendance: _todayAttendance,
         onToggleBreak: () => _toggleBreak(null),
         isPunching: _isPunching,
+        repository: widget.repository,
+        department: widget.department,
+        workMode: widget.workMode,
         attendanceRecords: widget.repository.attendanceList.value
             .where((a) =>
                 widget.staff.id.isEmpty ||
@@ -1520,7 +1523,10 @@ class _PunchPage extends StatefulWidget {
       required this.attendance,
       required this.onToggleBreak,
       required this.attendanceRecords,
-      this.isPunching = false});
+      this.isPunching = false,
+      this.repository,
+      this.department,
+      this.workMode});
   final bool checkedIn;
   final DateTime checkInTime;
   final DateTime? checkOutTime;
@@ -1529,12 +1535,17 @@ class _PunchPage extends StatefulWidget {
   final Future<void> Function() onToggleBreak;
   final List<Attendance> attendanceRecords;
   final bool isPunching;
+  final HRRepository? repository;
+  final String? department;
+  final String? workMode;
+
   @override
   State<_PunchPage> createState() => _PunchPageState();
 }
 
 class _PunchPageState extends State<_PunchPage> {
   late final Timer _timer;
+  bool _isClearingHistory = false;
 
   @override
   void initState() {
@@ -1548,6 +1559,201 @@ class _PunchPageState extends State<_PunchPage> {
   void dispose() {
     _timer.cancel();
     super.dispose();
+  }
+
+  Future<void> _handleClearHistory() async {
+    if (_isClearingHistory) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear Attendance History'),
+        content: const Text(
+          'Clear your attendance history from this view?\n\n'
+          'Official attendance records remain available to HR and will not be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xffd84747),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Clear History'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isClearingHistory = true);
+    try {
+      if (widget.repository != null) {
+        await widget.repository!.clearAttendanceHistory();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Attendance history cleared from your view. Official records remain available to HR.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Failed to clear history: ${e.toString().replaceAll('Exception: ', '')}'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isClearingHistory = false);
+      }
+    }
+  }
+
+  void _openAttendanceDetail(BuildContext context, Attendance record) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _AttendanceDetailBottomSheet(
+        initialRecord: record,
+        repository: widget.repository,
+        department: widget.department,
+        workMode: widget.workMode,
+      ),
+    );
+  }
+
+  Widget _buildHistoryItem(BuildContext context, Attendance item) {
+    final checkInDisplay = item.checkInTime.isNotEmpty
+        ? formatShiftTime(item.checkInTime)
+        : (item.checkInAt != null
+            ? TimeOfDay.fromDateTime(item.checkInAt!).format(context)
+            : 'Not recorded');
+
+    final statusText = item.displayStatus;
+    final isLateStatus = item.isLate;
+    final sessionStatusText = item.sessionStatusLabel;
+    final isOngoing = item.isOngoing;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _line, width: 1.1),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0a0f172a),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openAttendanceDetail(context, item),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: isOngoing
+                        ? const Color(0xfffff7e6)
+                        : const Color(0xffe9f0ff),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    isOngoing
+                        ? Icons.timelapse_outlined
+                        : Icons.calendar_today_outlined,
+                    size: 17,
+                    color: isOngoing ? const Color(0xffd48b0c) : _blue,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _formatDisplayDate(item.date),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _ink,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Icon(Icons.login, size: 12, color: _muted),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              'In: $checkInDisplay',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 11, color: _muted),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _pill(
+                      statusText,
+                      isLateStatus
+                          ? const Color(0xffffeeee)
+                          : const Color(0xffe8f8ef),
+                      isLateStatus
+                          ? const Color(0xffd84747)
+                          : const Color(0xff198754),
+                    ),
+                    const SizedBox(height: 3),
+                    _pill(
+                      sessionStatusText,
+                      isOngoing
+                          ? const Color(0xfffff7e6)
+                          : const Color(0xffe9f0ff),
+                      isOngoing ? const Color(0xffd48b0c) : _blue,
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.chevron_right, size: 18, color: _muted),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -1667,22 +1873,83 @@ class _PunchPageState extends State<_PunchPage> {
         ])),
       ],
       const SizedBox(height: 14),
-      Text('Attendance History',
-          style: TextStyle(
-              fontSize: 15, fontWeight: FontWeight.w700, color: _ink)),
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Attendance History',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: _ink,
+              ),
+            ),
+          ),
+          if (widget.attendanceRecords.isNotEmpty)
+            TextButton.icon(
+              key: const ValueKey('clear-attendance-history-button'),
+              onPressed: _isClearingHistory ? null : _handleClearHistory,
+              icon: _isClearingHistory
+                  ? const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    )
+                  : const Icon(Icons.delete_sweep_outlined,
+                      size: 15, color: Color(0xffd84747)),
+              label: Text(
+                'Clear History',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: _isClearingHistory
+                      ? _muted
+                      : const Color(0xffd84747),
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+        ],
+      ),
       const SizedBox(height: 8),
-      _ProfileCard(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (widget.attendanceRecords.isEmpty)
-          Text('No attendance records yet',
-              style: TextStyle(color: _muted, fontSize: 13)),
+      if (widget.attendanceRecords.isEmpty)
+        _ProfileCard(
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+            alignment: Alignment.center,
+            child: Column(
+              children: [
+                Icon(Icons.history_toggle_off_outlined,
+                    size: 36, color: _muted.withOpacity(0.5)),
+                const SizedBox(height: 8),
+                Text(
+                  'No attendance records yet',
+                  style: TextStyle(
+                    color: _muted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Your punch and attendance records will appear here.',
+                  style: TextStyle(
+                    color: _muted.withOpacity(0.8),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        )
+      else
         for (final item in widget.attendanceRecords)
-          _historyRow(
-              item.date,
-              '${item.checkInTime} – ${item.checkOutTime ?? 'Pending'}',
-              item.checkOutTime == null ? 'In Progress' : 'Present')
-      ])),
+          _buildHistoryItem(context, item),
       const SizedBox(height: 18),
       SizedBox(
           width: double.infinity,
@@ -1713,6 +1980,496 @@ class _PunchPageState extends State<_PunchPage> {
                       widget.checkedIn ? const Color(0xffd84747) : _blue))),
     ]);
   }
+}
+
+class _AttendanceDetailBottomSheet extends StatefulWidget {
+  const _AttendanceDetailBottomSheet({
+    required this.initialRecord,
+    this.repository,
+    this.department,
+    this.workMode,
+  });
+
+  final Attendance initialRecord;
+  final HRRepository? repository;
+  final String? department;
+  final String? workMode;
+
+  @override
+  State<_AttendanceDetailBottomSheet> createState() =>
+      _AttendanceDetailBottomSheetState();
+}
+
+class _AttendanceDetailBottomSheetState
+    extends State<_AttendanceDetailBottomSheet> {
+  late Attendance _record;
+
+  @override
+  void initState() {
+    super.initState();
+    _record = widget.initialRecord;
+    _fetchFreshDetail();
+  }
+
+  Future<void> _fetchFreshDetail() async {
+    if (widget.repository == null || _record.id.isEmpty) return;
+    try {
+      final fresh = await widget.repository!.fetchAttendanceDetail(_record.id);
+      if (mounted) {
+        setState(() {
+          _record = fresh;
+        });
+      }
+    } catch (_) {
+      // Gracefully retain initialRecord on offline or error
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final record = _record;
+    final isOngoing = record.isOngoing;
+    final departmentName = record.department ?? widget.department ?? 'Tech';
+    final workModeName = record.workMode ?? widget.workMode ?? 'Office';
+
+    final checkInDisplay = record.checkInTime.isNotEmpty
+        ? formatShiftTime(record.checkInTime)
+        : (record.checkInAt != null
+            ? TimeOfDay.fromDateTime(record.checkInAt!).format(context)
+            : 'Not recorded');
+
+    final checkOutDisplay = isOngoing
+        ? 'Pending'
+        : (record.checkOutTime != null && record.checkOutTime!.isNotEmpty
+            ? formatShiftTime(record.checkOutTime!)
+            : (record.checkOutAt != null
+                ? TimeOfDay.fromDateTime(record.checkOutAt!).format(context)
+                : 'Pending'));
+
+    final defaultScheduledCheckIn =
+        departmentName.toLowerCase().contains('tele') ? '09:00 AM' : '10:00 AM';
+    final scheduledCheckInDisplay = record.scheduledCheckIn != null &&
+            record.scheduledCheckIn!.isNotEmpty
+        ? formatShiftTime(record.scheduledCheckIn!)
+        : (record.scheduleSnapshot?['scheduledCheckIn'] != null
+            ? formatShiftTime(
+                record.scheduleSnapshot!['scheduledCheckIn'].toString())
+            : defaultScheduledCheckIn);
+
+    final scheduledCheckOutDisplay = record.scheduledCheckOut != null &&
+            record.scheduledCheckOut!.isNotEmpty
+        ? formatShiftTime(record.scheduledCheckOut!)
+        : (record.scheduleSnapshot?['scheduledCheckOut'] != null
+            ? formatShiftTime(
+                record.scheduleSnapshot!['scheduledCheckOut'].toString())
+            : '06:00 PM');
+
+    final lateArrivalDisplay = record.isLate
+        ? (record.minutesLate != null && record.minutesLate! > 0
+            ? '${record.minutesLate} mins late'
+            : 'Late arrival')
+        : 'None (On time)';
+
+    final workingDurationDisplay = isOngoing
+        ? 'In Progress'
+        : (record.workedDuration.isNotEmpty ? record.workedDuration : '0h');
+
+    final totalBreaksCount = record.breaks.length;
+    final totalBreaksDisplay =
+        '$totalBreaksCount break${totalBreaksCount == 1 ? '' : 's'}';
+    final totalBreakDurationDisplay = record.breakDuration.isNotEmpty
+        ? record.breakDuration
+        : '${record.totalBreakMinutes ?? (record.totalBreakSeconds ~/ 60)} min';
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (ctx, scrollController) => Container(
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x22000000),
+              blurRadius: 20,
+              offset: Offset(0, -4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                color: _line,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Attendance Details',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: _ink,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatDisplayDate(record.date),
+                          style: TextStyle(fontSize: 12, color: _muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _pill(
+                    record.sessionStatusLabel,
+                    isOngoing
+                        ? const Color(0xfffff7e6)
+                        : const Color(0xffe8f8ef),
+                    isOngoing ? const Color(0xffd48b0c) : const Color(0xff198754),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: Icon(Icons.close, color: _muted, size: 20),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: _line),
+            Expanded(
+              child: ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                children: [
+                  if (isOngoing) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xfffff8ec),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xfffae0b5)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline,
+                              size: 18, color: Color(0xffd48b0c)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Shift currently in progress. Checkout is pending.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xffa66a16),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  // 1. Attendance Summary
+                  _sheetSectionHeader(Icons.summarize_outlined, 'Attendance Summary'),
+                  const SizedBox(height: 8),
+                  _sheetCard([
+                    _sheetRow('Attendance Date', _formatDisplayDate(record.date)),
+                    _sheetDivider(),
+                    _sheetRow('Department', departmentName),
+                    _sheetDivider(),
+                    _sheetRow('Work Mode', workModeName),
+                    _sheetDivider(),
+                    _sheetRow(
+                      'Attendance Status',
+                      record.displayStatus,
+                      valueColor: record.isLate
+                          ? const Color(0xffd84747)
+                          : const Color(0xff198754),
+                      trailingBadge: _pill(
+                        record.displayStatus,
+                        record.isLate
+                            ? const Color(0xffffeeee)
+                            : const Color(0xffe8f8ef),
+                        record.isLate
+                            ? const Color(0xffd84747)
+                            : const Color(0xff198754),
+                      ),
+                    ),
+                    _sheetDivider(),
+                    _sheetRow(
+                        'Total Working Duration', workingDurationDisplay),
+                  ]),
+
+                  const SizedBox(height: 18),
+
+                  // 2. Punch Details
+                  _sheetSectionHeader(Icons.punch_clock_outlined, 'Punch Details'),
+                  const SizedBox(height: 8),
+                  _sheetCard([
+                    _sheetRow('Check-in Time', checkInDisplay),
+                    _sheetDivider(),
+                    _sheetRow(
+                      'Check-out Time',
+                      checkOutDisplay,
+                      valueColor: isOngoing ? const Color(0xffd48b0c) : null,
+                    ),
+                    _sheetDivider(),
+                    _sheetRow('Scheduled Check-in', scheduledCheckInDisplay),
+                    _sheetDivider(),
+                    _sheetRow('Scheduled Checkout', scheduledCheckOutDisplay),
+                    _sheetDivider(),
+                    _sheetRow(
+                      'Late Arrival Duration',
+                      lateArrivalDisplay,
+                      valueColor:
+                          record.isLate ? const Color(0xffd84747) : null,
+                    ),
+                  ]),
+
+                  const SizedBox(height: 18),
+
+                  // 3. Break Details
+                  _sheetSectionHeader(Icons.coffee_outlined, 'Break Details'),
+                  const SizedBox(height: 8),
+                  _sheetCard([
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Total Breaks',
+                                  style: TextStyle(
+                                      fontSize: 11, color: _muted)),
+                              const SizedBox(height: 2),
+                              Text(totalBreaksDisplay,
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: _ink)),
+                            ],
+                          ),
+                        ),
+                        Container(width: 1, height: 30, color: _line),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Total Break Duration',
+                                  style: TextStyle(
+                                      fontSize: 11, color: _muted)),
+                              const SizedBox(height: 2),
+                              Text(totalBreakDurationDisplay,
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xffa66a16))),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (record.breaks.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _sheetDivider(),
+                      const SizedBox(height: 8),
+                      for (int i = 0; i < record.breaks.length; i++) ...[
+                        _buildBreakRow(context, i + 1, record.breaks[i]),
+                        if (i < record.breaks.length - 1) _sheetDivider(),
+                      ],
+                    ] else ...[
+                      const SizedBox(height: 12),
+                      _sheetDivider(),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Text(
+                          'No breaks recorded for this shift.',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: _muted,
+                              fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                    ],
+                  ]),
+
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBreakRow(BuildContext context, int index, AttendanceBreak b) {
+    final startDisplay =
+        TimeOfDay.fromDateTime(b.startTime).format(context);
+    final endDisplay = b.endTime != null
+        ? TimeOfDay.fromDateTime(b.endTime!).format(context)
+        : 'Active';
+    final durationDisplay = b.durationMinutes != null && b.durationMinutes! > 0
+        ? '${b.durationMinutes} min'
+        : (b.isCompleted
+            ? '${b.durationSeconds ~/ 60} min'
+            : 'Ongoing');
+
+    final breakName = _breakTypeLabel(b.breakType);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Break $index \u2013 $breakName',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: _ink,
+                ),
+              ),
+              const Spacer(),
+              _pill(
+                b.isActive ? 'Active (Ongoing)' : 'Completed',
+                b.isActive ? const Color(0xfffff7e6) : const Color(0xffe8f8ef),
+                b.isActive ? const Color(0xffd48b0c) : const Color(0xff198754),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$startDisplay \u2013 $endDisplay \u00B7 $durationDisplay',
+            style: TextStyle(fontSize: 12, color: _muted),
+          ),
+          if (b.remarks.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Remarks: ${b.remarks}',
+              style: TextStyle(
+                  fontSize: 11,
+                  color: _muted,
+                  fontStyle: FontStyle.italic),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _sheetSectionHeader(IconData icon, String title) => Row(
+        children: [
+          Icon(icon, size: 15, color: _blue),
+          const SizedBox(width: 6),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: _ink,
+            ),
+          ),
+        ],
+      );
+
+  Widget _sheetCard(List<Widget> children) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        ),
+      );
+
+  Widget _sheetDivider() =>
+      Divider(height: 14, thickness: 0.8, color: _line);
+
+  Widget _sheetRow(String label, String value,
+          {Color? valueColor, Widget? trailingBadge}) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 145,
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _muted,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: valueColor ?? _ink,
+                      ),
+                    ),
+                  ),
+                  if (trailingBadge != null) trailingBadge,
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+String _formatDisplayDate(String isoOrDate) {
+  final d = DateTime.tryParse(isoOrDate);
+  if (d == null) return isoOrDate;
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const months = [
+    '',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ];
+  final weekday =
+      (d.weekday >= 1 && d.weekday <= 7) ? days[d.weekday - 1] : '';
+  final month = (d.month >= 1 && d.month <= 12) ? months[d.month] : '';
+  final dayStr = d.day.toString().padLeft(2, '0');
+  return '$weekday, $dayStr $month ${d.year}';
 }
 
 String _formatDateString(String iso) {
@@ -4258,29 +5015,6 @@ Widget _timeline(IconData icon, String title, String subtitle, String time,
       ])),
       Text(time, style: TextStyle(fontSize: 10, color: _ink))
     ]);
-Widget _historyRow(String date, String detail, String status) => Container(
-    padding: const EdgeInsets.symmetric(vertical: 7),
-    decoration: BoxDecoration(border: Border(bottom: BorderSide(color: _line))),
-    child: Row(children: [
-      Icon(Icons.calendar_today_outlined, size: 13, color: _blue),
-      const SizedBox(width: 7),
-      Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(date,
-            style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w600, color: _ink)),
-        Text(detail, style: TextStyle(fontSize: 10, color: _muted))
-      ])),
-      _pill(
-          status,
-          status == 'Present'
-              ? const Color(0xffe8f8ef)
-              : const Color(0xffeef1ff),
-          status == 'Present' ? const Color(0xff198754) : _blue),
-      const SizedBox(width: 5),
-      Icon(Icons.chevron_right, size: 14, color: _muted)
-    ]));
 Widget _smallLabel(String text, {Color? color}) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Text(text,

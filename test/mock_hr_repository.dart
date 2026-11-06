@@ -133,6 +133,28 @@ class MockHRRepository implements HRRepository {
   Future<void> fetchStaffAttendance() async {}
 
   @override
+  Future<Attendance> fetchAttendanceDetail(String attendanceId) async {
+    for (final a in attendanceList.value) {
+      if (a.id == attendanceId) return a;
+    }
+    return Attendance(
+      id: attendanceId,
+      date: '2026-11-06',
+      checkInTime: '09:30 AM',
+      checkOutTime: '06:00 PM',
+      status: 'PRESENT',
+      workMode: 'Office',
+      department: 'Tech',
+    );
+  }
+
+  @override
+  Future<void> clearAttendanceHistory() async {
+    final active = attendanceList.value.where((a) => a.isOngoing).toList();
+    attendanceList.value = active;
+  }
+
+  @override
   Future<Attendance> checkIn(String staffId) async {
     final att = Attendance(
         id: 'att1',
