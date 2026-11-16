@@ -58,24 +58,26 @@ class ApiConfig {
   };
 
   // ── AUTH ENDPOINTS ────────────────────────────────────────────────────────
-  static const String login          = '/auth/login';
-  static const String logout         = '/auth/logout';
-  static const String refreshToken   = '/auth/refresh-token';
+  static const String login = '/auth/login';
+  static const String logout = '/auth/logout';
+  static const String refreshToken = '/auth/refresh-token';
   static const String forgotPassword = '/auth/forgot-password';
-  static const String resetPassword  = '/auth/reset-password';
+  static const String resetPassword = '/auth/reset-password';
 
   // ── STAFF ENDPOINTS ───────────────────────────────────────────────────────
   static const String staffDashboard = '/staff/dashboard';
-  static const String staffProfile   = '/staff/profile';
+  static const String staffProfile = '/staff/profile';
+  static const String birthdaysToday = '/birthdays/today';
 
   // ── ATTENDANCE ENDPOINTS ──────────────────────────────────────────────────
-  static const String attendanceCheckIn  = '/staff/attendance/check-in';
+  static const String attendanceCheckIn = '/staff/attendance/check-in';
   static const String attendanceCheckOut = '/staff/attendance/check-out';
-  static const String attendance         = '/staff/attendance';
+  static const String attendance = '/staff/attendance';
   static String attendanceDetail(String attendanceId) =>
       '/staff/attendance/$attendanceId';
   static const String attendanceClearHistory = '/staff/attendance/history';
-  static const String attendanceClearHistoryPost = '/staff/attendance/clear-history';
+  static const String attendanceClearHistoryPost =
+      '/staff/attendance/clear-history';
   static String attendanceBreakStart(String attendanceId) =>
       '/staff/attendance/$attendanceId/breaks/start';
   static String attendanceBreakEnd(String attendanceId) =>
@@ -90,15 +92,28 @@ class ApiConfig {
   // ── STAFF DOCUMENT ENDPOINTS ──────────────────────────────────────────────
   static const String staffDocuments = '/staff/documents';
   static String staffDocumentById(String id) => '/staff/documents/$id';
-  static String staffDocumentDownload(String id) => '/staff/documents/$id/download';
+  static String staffDocumentDownload(String id) =>
+      '/staff/documents/$id/download';
 
   // ── DAILY UPDATE ENDPOINTS ────────────────────────────────────────────────
   static const String dailyUpdates = '/staff/daily-updates';
 
   // ── CHAT ENDPOINTS ────────────────────────────────────────────────────────
   static const String staffChatMessages = '/staff/chat/messages';
-  static String staffDepartmentMessages(String deptKey) => '/staff/departments/$deptKey/messages';
-  static String staffChatMessageDelete(String messageId) => '/staff/chat/messages/$messageId';
-  static String staffChatMessageDeleteForMe(String messageId) => '/staff/chat/messages/$messageId/delete-for-me';
+  static String staffDepartmentMessages(String deptKey) =>
+      '/staff/departments/$deptKey/messages';
+  static String staffDepartmentMessageSearch(String deptKey) =>
+      '${staffDepartmentMessages(deptKey)}/search';
+  static String staffDepartmentChatClear(String deptKey) =>
+      '${staffDepartmentMessages(deptKey)}/clear';
+  static String staffDepartmentMessageDelete(
+          String deptKey, String messageId) =>
+      '${staffDepartmentMessages(deptKey)}/$messageId';
+  static String staffDepartmentMessageDeleteForMe(
+          String deptKey, String messageId) =>
+      '${staffDepartmentMessageDelete(deptKey, messageId)}/delete-for-me';
+  static String staffChatMessageDelete(String messageId) =>
+      '/staff/chat/messages/$messageId';
+  static String staffChatMessageDeleteForMe(String messageId) =>
+      '/staff/chat/messages/$messageId/delete-for-me';
 }
-

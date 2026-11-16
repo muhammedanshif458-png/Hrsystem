@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Test double implementing ApiService to simulate backend REST responses
 class FakeChatApiService extends ApiService {
   final Map<String, dynamic> responses = {};
+  final List<Map<String, dynamic>> getRequests = [];
   final List<Map<String, dynamic>> postRequests = [];
   final List<String> patchRequests = [];
   final List<String> deleteRequests = [];
@@ -24,13 +25,16 @@ class FakeChatApiService extends ApiService {
     String endpoint, {
     Map<String, dynamic>? queryParams,
   }) async {
-    // Match exact or prefix
-    for (final key in responses.keys) {
-      if (endpoint.contains(key)) {
-        final val = responses[key];
-        if (val is Exception) throw val;
-        return val;
-      }
+    getRequests.add({'endpoint': endpoint, 'queryParams': queryParams});
+    // Prefer the most specific endpoint (for example, search over history).
+    final matchingKeys = responses.keys
+        .where((key) => endpoint == key || endpoint.startsWith('$key/'))
+        .toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+    for (final key in matchingKeys) {
+      final val = responses[key];
+      if (val is Exception) throw val;
+      return val;
     }
     return {'success': true, 'data': []};
   }
@@ -58,7 +62,9 @@ class FakeChatApiService extends ApiService {
         'senderId': 'staff_current',
         'senderName': 'Authenticated Staff',
         'senderRole': 'STAFF',
-        'departmentKey': 'tech',
+        'departmentKey':
+            endpoint.contains('/telecalling/') ? 'telecalling' : 'tech',
+        'conversationType': 'DEPARTMENT',
         'clientMessageId': clientMsgId,
         'text': text,
         'timestamp': DateTime.now().toIso8601String(),
@@ -109,6 +115,7 @@ void main() {
       expect(canonicalDepartmentKey('TELECALLING'), 'telecalling');
       expect(canonicalDepartmentKey('Calling Dept'), 'telecalling');
       expect(canonicalDepartmentKey('Client Success'), 'telecalling');
+      expect(canonicalDepartmentKey('not-tech'), 'not-tech');
     });
 
     test('normalizes HR representations to "hr"', () {
@@ -117,10 +124,11 @@ void main() {
       expect(canonicalDepartmentKey('hr'), 'hr');
     });
 
-    test('fallback returns "tech" on null or empty input', () {
-      expect(canonicalDepartmentKey(null), 'tech');
-      expect(canonicalDepartmentKey(''), 'tech');
-      expect(canonicalDepartmentKey('   '), 'tech');
+    test('missing or invalid department keys remain unknown', () {
+      expect(canonicalDepartmentKey(null), isEmpty);
+      expect(canonicalDepartmentKey(''), isEmpty);
+      expect(canonicalDepartmentKey('   '), isEmpty);
+      expect(canonicalDepartmentKey('***'), isEmpty);
     });
   });
 
@@ -132,6 +140,7 @@ void main() {
         'senderName': 'Vikram Patel',
         'senderRole': 'STAFF',
         'departmentKey': 'tech',
+        'conversationType': 'DEPARTMENT',
         'clientMessageId': 'client_temp_1',
         'receiverId': '',
         'text': 'All automated CI builds are passing.',
@@ -167,7 +176,8 @@ void main() {
           text: 'Notice',
           timestamp: DateTime.now(),
         );
-        expect(msg.isHR, isTrue, reason: 'Expected $role to be recognized as HR');
+        expect(msg.isHR, isTrue,
+            reason: 'Expected $role to be recognized as HR');
       }
 
       final staffMsg = StaffChatMessage(
@@ -181,11 +191,40 @@ void main() {
       expect(staffMsg.isHR, isFalse);
     });
 
+    test('never parses original text for globally deleted messages', () {
+      final deleted = StaffChatMessage.fromJson({
+        '_id': 'gone',
+        'departmentKey': 'tech',
+        'conversationType': 'DEPARTMENT',
+        'text': 'private original content',
+        'deletedForEveryone': true,
+      });
+      expect(deleted.deletedForEveryone, isTrue);
+      expect(deleted.text, isEmpty);
+    });
+
+    test('missing conversation type remains unknown', () {
+      final message = StaffChatMessage.fromJson({
+        '_id': 'missing_type',
+        'departmentKey': 'tech',
+        'text': 'unclassified payload',
+      });
+      expect(message.conversationType, isEmpty);
+      final untyped = StaffChatMessage(
+        id: 'constructed_without_type',
+        senderId: 'sender',
+        departmentKey: 'tech',
+        text: 'unclassified model',
+        timestamp: DateTime.now(),
+      );
+      expect(untyped.conversationType, isEmpty);
+    });
+
     test('isSentBy matches authenticated employee profile accurately', () {
       final currentStaff = Staff(
         id: 'staff_99',
         name: 'Kavita Roy',
-        department: Department.telecalling,
+        department: 'Telecalling & Client Relations',
       );
 
       final myMsg = StaffChatMessage(
@@ -240,7 +279,67 @@ void main() {
   });
 
   group('3. StaffChatSocketService Real-time Events and Reconnection', () {
-    test('notifies message listeners when new_message or message_received arrives', () {
+    test('invalid department joins do not subscribe to Tech', () {
+      final socketService = StaffChatSocketService()..isTestMode = true;
+      socketService.joinDepartment('');
+      expect(socketService.currentDepartmentKey, isNull);
+      socketService.joinDepartment('***');
+      expect(socketService.currentDepartmentKey, isNull);
+      socketService.joinDepartment(Department.all);
+      expect(socketService.currentDepartmentKey, isNull);
+    });
+
+    test('socket parser rejects missing or invalid conversation metadata', () {
+      final socketService = StaffChatSocketService()..isTestMode = true;
+      final received = <StaffChatMessage>[];
+      final unsubscribe = socketService.addMessageListener(received.add);
+
+      socketService.emitTestIncomingPayload({
+        '_id': 'missing_type',
+        'departmentKey': 'tech',
+        'text': 'must not appear',
+      });
+      socketService.emitTestIncomingPayload({
+        '_id': 'missing_dept',
+        'conversationType': 'DEPARTMENT',
+        'text': 'must not appear either',
+      });
+      socketService.emitTestIncomingPayload({
+        '_id': 'company_conversation',
+        'conversationType': 'COMPANY',
+        'departmentKey': 'tech',
+        'text': 'company chat must not enter department listeners',
+      });
+      socketService.emitTestIncomingPayload({
+        '_id': 'invalid_dept',
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': '***',
+        'text': 'invalid department',
+      });
+      expect(received, isEmpty);
+
+      socketService.emitTestIncomingPayload({
+        '_id': 'valid_tech',
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'Tech & Engineering',
+        'text': 'valid tech event',
+      });
+      socketService.emitTestIncomingPayload({
+        '_id': 'valid_telecalling',
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'Telecalling & Client Relations',
+        'text': 'valid telecalling event',
+      });
+      expect(received.map((message) => message.id),
+          ['valid_tech', 'valid_telecalling']);
+      expect(received.map((message) => message.conversationType),
+          everyElement('DEPARTMENT'));
+      unsubscribe();
+    });
+
+    test(
+        'notifies message listeners when new_message or message_received arrives',
+        () {
       final socketService = StaffChatSocketService();
       socketService.isTestMode = true;
       socketService.joinDepartment('tech');
@@ -256,6 +355,7 @@ void main() {
         senderName: 'HR Manager',
         senderRole: 'HR',
         departmentKey: 'tech',
+        conversationType: 'DEPARTMENT',
         text: 'Welcome to the tech channel',
         timestamp: DateTime.now(),
       );
@@ -304,6 +404,40 @@ void main() {
       expect(reconnectedDept, 'telecalling');
       unsubscribe();
     });
+
+    test('preserves conversation type on scoped deletion events', () {
+      final socketService = StaffChatSocketService();
+      socketService.isTestMode = true;
+
+      String? receivedType;
+      String? receivedDepartment;
+      bool? receivedForEveryone;
+      final unsubscribe = socketService.addScopedDeleteListener(
+          (messageId, deletedForEveryone, conversationType, departmentKey) {
+        receivedType = conversationType;
+        receivedDepartment = departmentKey;
+        receivedForEveryone = deletedForEveryone;
+      });
+
+      socketService.emitTestDeletedPayload({
+        'messageId': 'missing_metadata',
+        'deletedForEveryone': true,
+        'departmentKey': 'telecalling',
+      });
+      expect(receivedType, isNull);
+
+      socketService.emitTestDeletedPayload({
+        'messageId': 'department_message',
+        'deletedForEveryone': false,
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'telecalling',
+      });
+
+      expect(receivedType, 'DEPARTMENT');
+      expect(receivedDepartment, 'telecalling');
+      expect(receivedForEveryone, isFalse);
+      unsubscribe();
+    });
   });
 
   group('4. HRRepositoryImpl Chat Operations', () {
@@ -319,14 +453,18 @@ void main() {
       repository.dispose();
     });
 
-    test('fetchDepartmentMessages parses and sorts backend list chronologically', () async {
-      fakeApi.setResponse(ApiConfig.staffChatMessages, {
+    test(
+        'fetchDepartmentMessages parses and sorts backend list chronologically',
+        () async {
+      fakeApi.setResponse(ApiConfig.staffDepartmentMessages('tech'), {
         'success': true,
         'data': [
           {
             '_id': 'msg_b',
             'senderId': 'staff_2',
             'senderName': 'Bob',
+            'departmentKey': 'tech',
+            'conversationType': 'DEPARTMENT',
             'text': 'Second message',
             'timestamp': '2026-10-29T10:02:00.000Z',
           },
@@ -334,13 +472,39 @@ void main() {
             '_id': 'msg_a',
             'senderId': 'staff_1',
             'senderName': 'Alice',
+            'departmentKey': 'tech',
+            'conversationType': 'DEPARTMENT',
             'text': 'First message',
             'timestamp': '2026-10-29T10:00:00.000Z',
+          },
+          {
+            '_id': 'missing_type',
+            'senderId': 'staff_3',
+            'departmentKey': 'tech',
+            'text': 'must not enter history',
+            'timestamp': '2026-10-29T10:03:00.000Z',
+          },
+          {
+            '_id': 'wrong_department',
+            'senderId': 'staff_4',
+            'departmentKey': 'telecalling',
+            'conversationType': 'DEPARTMENT',
+            'text': 'must not enter tech history',
+            'timestamp': '2026-10-29T10:04:00.000Z',
+          },
+          {
+            '_id': 'company_message',
+            'senderId': 'hr_1',
+            'departmentKey': 'tech',
+            'conversationType': 'COMPANY',
+            'text': 'must not enter department history',
+            'timestamp': '2026-10-29T10:05:00.000Z',
           },
         ]
       });
 
-      final result = await repository.fetchDepartmentMessages();
+      final result =
+          await repository.fetchDepartmentMessages(departmentKey: 'tech');
 
       expect(result.length, 2);
       expect(result[0].id, 'msg_a');
@@ -350,7 +514,55 @@ void main() {
       expect(repository.departmentChatMessages.value.length, 2);
     });
 
-    test('sendDepartmentMessage validates non-empty text and avoids duplicates', () async {
+    test(
+        'department API methods reject missing department instead of defaulting',
+        () async {
+      await expectLater(
+        repository.fetchDepartmentMessages(),
+        throwsA(isA<FormatException>()),
+      );
+      await expectLater(
+        repository.sendDepartmentMessage('message'),
+        throwsA(isA<FormatException>()),
+      );
+      await expectLater(
+        repository.searchDepartmentMessages(departmentKey: '', query: 'x'),
+        throwsA(isA<FormatException>()),
+      );
+      expect(fakeApi.getRequests, isEmpty);
+      expect(fakeApi.postRequests, isEmpty);
+    });
+
+    test('department API rejects a requested department different from profile',
+        () async {
+      repository.currentUser.value = Staff(
+        id: 'authenticated_tech',
+        name: 'Tech Staff',
+        department: Department.tech,
+      );
+      await expectLater(
+        repository.fetchDepartmentMessages(departmentKey: 'telecalling'),
+        throwsA(isA<FormatException>()),
+      );
+      expect(fakeApi.getRequests, isEmpty);
+    });
+
+    test('department history requests preserve pagination parameters',
+        () async {
+      await repository.fetchDepartmentMessages(
+        departmentKey: 'Telecalling & Client Relations',
+        page: 3,
+        limit: 20,
+      );
+
+      expect(fakeApi.getRequests.single['endpoint'],
+          ApiConfig.staffDepartmentMessages('telecalling'));
+      expect(
+          fakeApi.getRequests.single['queryParams'], {'page': 3, 'limit': 20});
+    });
+
+    test('sendDepartmentMessage validates non-empty text and avoids duplicates',
+        () async {
       expect(
         () => repository.sendDepartmentMessage('   '),
         throwsA(isA<Exception>()),
@@ -367,11 +579,13 @@ void main() {
         fakeApi.postRequests.first['endpoint'],
         ApiConfig.staffDepartmentMessages('telecalling'),
       );
-      expect(fakeApi.postRequests.first['body']['text'], 'Real backend message');
+      expect(
+          fakeApi.postRequests.first['body']['text'], 'Real backend message');
       expect(repository.departmentChatMessages.value.contains(sent), isTrue);
     });
 
-    test('deleteDepartmentMessageForMe removes message from local notifier', () async {
+    test('deleteDepartmentMessageForMe removes message from local notifier',
+        () async {
       repository.departmentChatMessages.value = [
         StaffChatMessage(
           id: 'del_me_1',
@@ -381,15 +595,398 @@ void main() {
         ),
       ];
 
-      await repository.deleteDepartmentMessageForMe('del_me_1');
+      await repository.deleteDepartmentMessageForMe('del_me_1',
+          departmentKey: 'telecalling');
 
-      expect(fakeApi.patchRequests, contains(ApiConfig.staffChatMessageDeleteForMe('del_me_1')));
+      expect(
+          fakeApi.patchRequests,
+          contains(ApiConfig.staffDepartmentMessageDeleteForMe(
+              'telecalling', 'del_me_1')));
       expect(repository.departmentChatMessages.value.isEmpty, isTrue);
+    });
+
+    test('deleteDepartmentMessageForEveryone preserves a deleted tombstone',
+        () async {
+      repository.departmentChatMessages.value = [
+        StaffChatMessage(
+          id: 'deleted_everyone_1',
+          senderId: 'staff_1',
+          text: 'Message to delete',
+          timestamp: DateTime.now(),
+        ),
+      ];
+
+      await repository.deleteDepartmentMessageForEveryone('deleted_everyone_1',
+          departmentKey: 'tech');
+
+      expect(
+        repository.departmentChatMessages.value.single.deletedForEveryone,
+        isTrue,
+      );
+      expect(repository.departmentChatMessages.value.single.text, isEmpty);
+      expect(
+          fakeApi.deleteRequests,
+          contains(ApiConfig.staffDepartmentMessageDelete(
+              'tech', 'deleted_everyone_1')));
+    });
+
+    test('department search uses scoped route and preserves server pagination',
+        () async {
+      fakeApi
+          .setResponse(ApiConfig.staffDepartmentMessageSearch('telecalling'), {
+        'success': true,
+        'data': [
+          {
+            '_id': 'match_1',
+            'departmentKey': 'telecalling',
+            'conversationType': 'DEPARTMENT',
+            'text': 'follow up',
+            'timestamp': '2026-10-29T10:00:00.000Z'
+          },
+          {
+            '_id': 'missing_type_search',
+            'departmentKey': 'telecalling',
+            'text': 'must not enter search results',
+            'timestamp': '2026-10-29T10:01:00.000Z'
+          },
+          {
+            '_id': 'wrong_department_search',
+            'departmentKey': 'tech',
+            'conversationType': 'DEPARTMENT',
+            'text': 'must not enter Telecalling results',
+            'timestamp': '2026-10-29T10:02:00.000Z'
+          },
+        ],
+        'pagination': {'page': 1, 'hasMore': true},
+      });
+
+      final result = await repository.searchDepartmentMessages(
+        departmentKey: 'Telecalling & Client Relations',
+        query: 'follow',
+        page: 1,
+      );
+
+      expect(fakeApi.getRequests.single['endpoint'],
+          ApiConfig.staffDepartmentMessageSearch('telecalling'));
+      expect(fakeApi.getRequests.single['queryParams'],
+          {'q': 'follow', 'page': 1, 'limit': 30});
+      expect(result.messages.single.id, 'match_1');
+      expect(result.hasMore, isTrue);
+      final nextPage = await repository.searchDepartmentMessages(
+        departmentKey: 'telecalling',
+        query: 'follow',
+        page: 2,
+      );
+      expect(nextPage.hasMore, isTrue);
+      expect(fakeApi.getRequests.last['queryParams'],
+          {'q': 'follow', 'page': 2, 'limit': 30});
+    });
+
+    test('clear history posts to own department and empties current view',
+        () async {
+      repository.departmentChatMessages.value = [
+        StaffChatMessage(
+            id: 'old',
+            senderId: 'someone',
+            text: 'old',
+            timestamp: DateTime.now()),
+      ];
+      await repository.clearDepartmentMessages(
+          departmentKey: 'Tech & Engineering');
+
+      expect(fakeApi.postRequests.single['endpoint'],
+          ApiConfig.staffDepartmentChatClear('tech'));
+      expect(fakeApi.postRequests.single['body'], isNull);
+      expect(repository.departmentChatMessages.value, isEmpty);
     });
   });
 
   group('5. StaffHub Chat Widget Integration', () {
-    testWidgets('Displays messages for authenticated department and styles HR separately',
+    testWidgets(
+        'global deletion updates open department search and leaves unrelated results intact',
+        (WidgetTester tester) async {
+      final fakeApi = FakeChatApiService();
+      fakeApi.setResponse(ApiConfig.staffDepartmentMessages('telecalling'), {
+        'success': true,
+        'data': [],
+      });
+      fakeApi
+          .setResponse(ApiConfig.staffDepartmentMessageSearch('telecalling'), {
+        'success': true,
+        'data': [
+          {
+            '_id': 'search_target',
+            'senderId': 'coworker_1',
+            'senderName': 'Coworker',
+            'departmentKey': 'telecalling',
+            'conversationType': 'DEPARTMENT',
+            'text': 'needle target original',
+            'timestamp': '2026-11-15T09:00:00.000Z',
+          },
+          {
+            '_id': 'search_unrelated',
+            'senderId': 'coworker_2',
+            'senderName': 'Coworker Two',
+            'departmentKey': 'telecalling',
+            'conversationType': 'DEPARTMENT',
+            'text': 'needle retained message',
+            'timestamp': '2026-11-15T09:01:00.000Z',
+          },
+          {
+            '_id': 'search_other_department',
+            'senderId': 'tech_1',
+            'senderName': 'Tech Coworker',
+            'departmentKey': 'tech',
+            'conversationType': 'DEPARTMENT',
+            'text': 'needle wrong department',
+            'timestamp': '2026-11-15T09:02:00.000Z',
+          },
+        ],
+        'pagination': {'page': 1, 'hasMore': false},
+      });
+      final repository = HRRepositoryImpl(api: fakeApi);
+      const staff = Staff(
+        id: 'tele_staff',
+        name: 'Tele Staff',
+        department: Department.telecalling,
+      );
+      repository.departmentChatMessages.value = [
+        StaffChatMessage(
+          id: 'search_target',
+          senderId: 'coworker_1',
+          senderName: 'Coworker',
+          departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
+          text: 'needle target original',
+          timestamp: DateTime(2026, 11, 15, 9),
+        ),
+        StaffChatMessage(
+          id: 'search_unrelated',
+          senderId: 'coworker_2',
+          senderName: 'Coworker Two',
+          departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
+          text: 'needle retained message',
+          timestamp: DateTime(2026, 11, 15, 9, 1),
+        ),
+      ];
+      StaffChatSocketService().isTestMode = true;
+
+      var pageIndex = 0;
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (context, updateParent) => MaterialApp(
+          home: StaffHubShell(
+            repository: repository,
+            pageIndex: pageIndex,
+            department: Department.telecalling,
+            staff: staff,
+            workMode: 'Office',
+            workLocation: null,
+            onNavigate: (index) => updateParent(() => pageIndex = index),
+            onLogout: () {},
+          ),
+        ),
+      ));
+      await tester.tap(find.byTooltip('Open chat'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Chat options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Search messages'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('chat-search')), 'needle');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      expect(find.text('needle target original'), findsOneWidget);
+      expect(find.text('needle retained message'), findsOneWidget);
+      expect(find.text('needle wrong department'), findsNothing);
+
+      final socket = StaffChatSocketService();
+      socket.emitTestDeletedPayload({
+        'messageId': 'search_target',
+        'deletedForEveryone': true,
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'tech',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('needle target original'), findsOneWidget);
+
+      socket.emitTestDeletedPayload({
+        'messageId': 'search_target',
+        'deletedForEveryone': false,
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'telecalling',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('needle target original'), findsOneWidget);
+
+      socket.emitTestDeletedPayload({
+        'messageId': 'search_target',
+        'deletedForEveryone': true,
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'telecalling',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('needle target original'), findsNothing);
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(find.text('needle retained message'), findsOneWidget);
+      expect(find.text('needle wrong department'), findsNothing);
+
+      await tester.tap(find.byTooltip('Chat options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Search messages'));
+      await tester.pumpAndSettle();
+      expect(find.text('needle target original'), findsNothing);
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(
+        repository.departmentChatMessages.value
+            .singleWhere((message) => message.id == 'search_target')
+            .text,
+        isEmpty,
+      );
+      repository.dispose();
+    });
+
+    testWidgets(
+        'global deletion replaces history and open search result without touching other messages',
+        (WidgetTester tester) async {
+      final fakeApi = FakeChatApiService();
+      fakeApi.setResponse(ApiConfig.staffDepartmentMessages('telecalling'), {
+        'success': true,
+        'data': [],
+      });
+      fakeApi
+          .setResponse(ApiConfig.staffDepartmentMessageSearch('telecalling'), {
+        'success': true,
+        'data': [
+          {
+            '_id': 'search_target',
+            'senderId': 'coworker_1',
+            'senderName': 'Coworker',
+            'departmentKey': 'telecalling',
+            'conversationType': 'DEPARTMENT',
+            'text': 'needle target original',
+            'timestamp': '2026-11-15T09:00:00.000Z',
+          },
+          {
+            '_id': 'search_unrelated',
+            'senderId': 'coworker_2',
+            'senderName': 'Coworker Two',
+            'departmentKey': 'telecalling',
+            'conversationType': 'DEPARTMENT',
+            'text': 'needle retained message',
+            'timestamp': '2026-11-15T09:01:00.000Z',
+          },
+          {
+            '_id': 'search_other_department',
+            'senderId': 'tech_1',
+            'senderName': 'Tech Coworker',
+            'departmentKey': 'tech',
+            'conversationType': 'DEPARTMENT',
+            'text': 'needle wrong department',
+            'timestamp': '2026-11-15T09:02:00.000Z',
+          },
+        ],
+        'pagination': {'page': 1, 'hasMore': false},
+      });
+      final repository = HRRepositoryImpl(api: fakeApi);
+      const staff = Staff(
+        id: 'tele_staff',
+        name: 'Tele Staff',
+        department: Department.telecalling,
+      );
+      repository.departmentChatMessages.value = [
+        StaffChatMessage(
+          id: 'search_target',
+          senderId: 'coworker_1',
+          senderName: 'Coworker',
+          departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
+          text: 'needle target original',
+          timestamp: DateTime(2026, 11, 15, 9),
+        ),
+        StaffChatMessage(
+          id: 'search_unrelated',
+          senderId: 'coworker_2',
+          senderName: 'Coworker Two',
+          departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
+          text: 'needle retained message',
+          timestamp: DateTime(2026, 11, 15, 9, 1),
+        ),
+      ];
+      StaffChatSocketService().isTestMode = true;
+
+      var pageIndex = 0;
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (context, updateParent) => MaterialApp(
+          home: StaffHubShell(
+            repository: repository,
+            pageIndex: pageIndex,
+            department: Department.telecalling,
+            staff: staff,
+            workMode: 'Office',
+            workLocation: null,
+            onNavigate: (index) => updateParent(() => pageIndex = index),
+            onLogout: () {},
+          ),
+        ),
+      ));
+      await tester.tap(find.byTooltip('Open chat'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Chat options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Search messages'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('chat-search')), 'needle');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      expect(find.text('needle target original'), findsOneWidget);
+      expect(find.text('needle retained message'), findsOneWidget);
+      expect(find.text('needle wrong department'), findsNothing);
+
+      final socket = StaffChatSocketService();
+      socket.emitTestDeletedPayload({
+        'messageId': 'search_target',
+        'deletedForEveryone': false,
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'telecalling',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('needle target original'), findsOneWidget);
+
+      socket.emitTestDeletedPayload({
+        'messageId': 'search_target',
+        'deletedForEveryone': true,
+        'conversationType': 'DEPARTMENT',
+        'departmentKey': 'telecalling',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('needle target original'), findsNothing);
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(find.text('needle retained message'), findsOneWidget);
+      expect(find.text('needle wrong department'), findsNothing);
+
+      await tester.tap(find.byTooltip('Chat options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Search messages'));
+      await tester.pumpAndSettle();
+      expect(find.text('needle target original'), findsNothing);
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(
+        repository.departmentChatMessages.value
+            .singleWhere((message) => message.id == 'search_target')
+            .text,
+        isEmpty,
+      );
+      repository.dispose();
+    });
+
+    testWidgets(
+        'Displays messages for authenticated department and styles HR separately',
         (WidgetTester tester) async {
       final fakeApi = FakeChatApiService();
       final repository = HRRepositoryImpl(api: fakeApi);
@@ -412,6 +1009,7 @@ void main() {
           senderName: 'Rohan Mehra',
           senderRole: 'STAFF',
           departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
           text: 'Campaign leads uploaded.',
           timestamp: DateTime(2026, 9, 24, 9, 30),
         ),
@@ -421,6 +1019,7 @@ void main() {
           senderName: 'HR Office',
           senderRole: 'HR',
           departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
           text: 'Please review updated calling script.',
           timestamp: DateTime(2026, 9, 24, 10, 0),
         ),
@@ -430,6 +1029,7 @@ void main() {
           senderName: 'Sunita Sharma',
           senderRole: 'STAFF',
           departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
           text: 'Understood, starting now.',
           timestamp: DateTime(2026, 9, 24, 10, 5),
         ),
@@ -454,14 +1054,54 @@ void main() {
       expect(find.byTooltip('Open chat'), findsOneWidget);
       await tester.tap(find.byTooltip('Open chat'));
       await tester.pumpAndSettle();
+      expect(find.text('Company Chat'), findsNothing);
+      expect(find.text('Chat'), findsOneWidget);
+      expect(find.text('TELECALLING'), findsOneWidget);
 
       // Verify messages are displayed
       expect(find.text('Campaign leads uploaded.'), findsOneWidget);
-      expect(find.text('Please review updated calling script.'), findsOneWidget);
+      expect(
+          find.text('Please review updated calling script.'), findsOneWidget);
       expect(find.text('Understood, starting now.'), findsOneWidget);
 
       // Verify HR badge is rendered for HR message
       expect(find.text('HR'), findsWidgets);
+
+      final companyEvent = StaffChatMessage(
+        id: 'company_socket_message',
+        senderId: 'hr_lead',
+        senderName: 'HR Office',
+        senderRole: 'HR',
+        departmentKey: 'company',
+        conversationType: 'COMPANY',
+        text: 'Company-only socket update',
+        timestamp: DateTime(2026, 9, 24, 10, 10),
+      );
+      socketService.emitTestIncomingMessage(companyEvent);
+      await tester.pumpAndSettle();
+      expect(find.text('Company-only socket update'), findsNothing);
+      expect(
+        repository.departmentChatMessages.value
+            .any((message) => message.id == companyEvent.id),
+        isFalse,
+      );
+
+      final otherDepartmentEvent = StaffChatMessage(
+        id: 'tech_socket_message',
+        senderId: 'emp_tech_03',
+        senderName: 'Tech Colleague',
+        senderRole: 'STAFF',
+        departmentKey: 'tech',
+        conversationType: 'DEPARTMENT',
+        text: 'Tech-only socket update',
+        timestamp: DateTime(2026, 9, 24, 10, 12),
+      );
+      socketService.emitTestIncomingMessage(otherDepartmentEvent);
+      await tester.pumpAndSettle();
+      expect(find.text('Tech-only socket update'), findsNothing);
+      socketService.emitTestReconnect('telecalling');
+      await tester.pumpAndSettle();
+      expect(find.text('Tech-only socket update'), findsNothing);
 
       // Test real-time message arrival via socket
       final incomingSocketMsg = StaffChatMessage(
@@ -470,6 +1110,7 @@ void main() {
         senderName: 'Deepak V.',
         senderRole: 'STAFF',
         departmentKey: 'telecalling',
+        conversationType: 'DEPARTMENT',
         text: 'Customer confirmed follow-up for 2 PM',
         timestamp: DateTime(2026, 9, 24, 10, 15),
       );
@@ -477,13 +1118,44 @@ void main() {
       socketService.emitTestIncomingMessage(incomingSocketMsg);
       await tester.pumpAndSettle();
 
-      expect(find.text('Customer confirmed follow-up for 2 PM'), findsOneWidget);
+      expect(
+          find.text('Customer confirmed follow-up for 2 PM'), findsOneWidget);
+
+      socketService.emitTestScopedMessageDeleted(
+        'realtime_sock_msg',
+        false,
+        conversationType: 'DEPARTMENT',
+        departmentKey: 'telecalling',
+      );
+      await tester.pumpAndSettle();
+      expect(
+          find.text('Customer confirmed follow-up for 2 PM'), findsOneWidget);
 
       // Test real-time message deletion
-      socketService.emitTestMessageDeleted('realtime_sock_msg', true);
+      socketService.emitTestScopedMessageDeleted(
+        'realtime_sock_msg',
+        true,
+        conversationType: 'DEPARTMENT',
+        departmentKey: 'telecalling',
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('Customer confirmed follow-up for 2 PM'), findsNothing);
+
+      final ownDeleted = StaffChatMessage(
+        id: 'own_deleted_message',
+        senderId: testStaff.id,
+        senderName: testStaff.name,
+        senderRole: 'STAFF',
+        departmentKey: 'telecalling',
+        conversationType: 'DEPARTMENT',
+        text: '',
+        deletedForEveryone: true,
+        timestamp: DateTime(2026, 9, 24, 10, 16),
+      );
+      socketService.emitTestIncomingMessage(ownDeleted);
+      await tester.pumpAndSettle();
+      expect(find.text('This message was deleted'), findsOneWidget);
 
       // Verify composer prevents empty send
       final composer = find.byKey(const ValueKey('chat-message-composer'));
@@ -500,6 +1172,200 @@ void main() {
 
       expect(find.text('Client meeting concluded'), findsOneWidget);
 
+      repository.dispose();
+    });
+
+    testWidgets('Tech staff stay in their profile department chat',
+        (WidgetTester tester) async {
+      final fakeApi = FakeChatApiService();
+      final repository = HRRepositoryImpl(api: fakeApi);
+      final staff = Staff(
+        id: 'emp_tech_01',
+        name: 'Rohan Verma',
+        department: 'Tech & Engineering',
+      );
+      repository.departmentChatMessages.value = [
+        StaffChatMessage(
+          id: 'tech_only',
+          senderId: 'emp_tech_02',
+          senderName: 'Tech Teammate',
+          departmentKey: 'tech',
+          conversationType: 'DEPARTMENT',
+          text: 'Tech department update',
+          timestamp: DateTime(2026, 11, 15, 9),
+        ),
+        StaffChatMessage(
+          id: 'tele_only',
+          senderId: 'emp_tele_02',
+          senderName: 'Telecalling Teammate',
+          departmentKey: 'telecalling',
+          conversationType: 'DEPARTMENT',
+          text: 'Telecalling department update',
+          timestamp: DateTime(2026, 11, 15, 9, 5),
+        ),
+        StaffChatMessage(
+          id: 'company_only',
+          senderId: 'hr_admin',
+          senderName: 'HR Office',
+          senderRole: 'HR',
+          departmentKey: 'company',
+          conversationType: 'COMPANY',
+          text: 'Company-wide update',
+          timestamp: DateTime(2026, 11, 15, 9, 10),
+        ),
+      ];
+
+      var pageIndex = 0;
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (context, updateParent) => MaterialApp(
+          home: StaffHubShell(
+            repository: repository,
+            pageIndex: pageIndex,
+            department: Department.telecalling,
+            staff: staff,
+            workMode: 'Office',
+            workLocation: null,
+            onNavigate: (index) => updateParent(() => pageIndex = index),
+            onLogout: () {},
+          ),
+        ),
+      ));
+      await tester.tap(find.byTooltip('Open chat'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Chat'), findsOneWidget);
+      expect(find.text('TECH'), findsOneWidget);
+      expect(find.text('Tech department update'), findsOneWidget);
+      expect(find.text('Telecalling department update'), findsNothing);
+      expect(find.text('Company-wide update'), findsNothing);
+      expect(find.text('Company Chat'), findsNothing);
+      await tester.tap(find.byTooltip('Chat options'));
+      await tester.pumpAndSettle();
+      expect(find.text('Search messages'), findsOneWidget);
+      expect(find.text('Clear chat'), findsOneWidget);
+      expect(find.text('Company Chat'), findsNothing);
+      await tester.tap(find.text('Search messages'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('chat-search')), findsOneWidget);
+      await tester.enterText(
+          find.byKey(const ValueKey('chat-search')), 'needle');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      expect(
+        fakeApi.getRequests.any((request) =>
+            request['endpoint'] ==
+                ApiConfig.staffDepartmentMessageSearch('tech') &&
+            request['queryParams']['q'] == 'needle'),
+        isTrue,
+      );
+      expect(
+        fakeApi.getRequests
+            .where((request) =>
+                request['endpoint'] ==
+                ApiConfig.staffDepartmentMessages('tech'))
+            .length,
+        1,
+      );
+      expect(
+        fakeApi.getRequests.any((request) =>
+            request['endpoint'].toString().contains('company-chat')),
+        isFalse,
+      );
+
+      final composer = find.byKey(const ValueKey('chat-message-composer'));
+      await tester.enterText(composer, 'Tech reply');
+      await tester.tap(find.byKey(const ValueKey('chat-message-send')));
+      await tester.pumpAndSettle();
+      expect(fakeApi.postRequests.single['endpoint'],
+          ApiConfig.staffDepartmentMessages('tech'));
+      expect(find.text('Tech reply'), findsOneWidget);
+      repository.dispose();
+    });
+
+    testWidgets('unresolved profile department blocks chat loading and sending',
+        (WidgetTester tester) async {
+      final fakeApi = FakeChatApiService();
+      final repository = HRRepositoryImpl(api: fakeApi);
+      final staff = Staff(id: 'staff_no_department', name: 'No Department');
+      var pageIndex = 0;
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (context, updateParent) => MaterialApp(
+          home: StaffHubShell(
+            repository: repository,
+            pageIndex: pageIndex,
+            department: Department.tech,
+            staff: staff,
+            workMode: 'Office',
+            workLocation: null,
+            onNavigate: (index) => updateParent(() => pageIndex = index),
+            onLogout: () {},
+          ),
+        ),
+      ));
+      await tester.tap(find.byTooltip('Open chat'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Department unavailable'), findsOneWidget);
+      expect(find.text('Your profile has no assigned department.'),
+          findsOneWidget);
+      expect(fakeApi.getRequests, isEmpty);
+      expect(StaffChatSocketService().currentDepartmentKey, isNull);
+      expect(
+          tester
+              .widget<TextField>(
+                  find.byKey(const ValueKey('chat-message-composer')))
+              .enabled,
+          isFalse);
+      expect(find.text('Company Chat'), findsNothing);
+      repository.dispose();
+    });
+
+    testWidgets('emoji search inserts multiple emojis into the composer',
+        (WidgetTester tester) async {
+      final repository = HRRepositoryImpl(api: FakeChatApiService());
+      final staff = Staff(
+        id: 'emp_tele_01',
+        name: 'Sunita Sharma',
+        department: Department.telecalling,
+      );
+      var pageIndex = 0;
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (context, updateParent) => MaterialApp(
+          home: StaffHubShell(
+            repository: repository,
+            pageIndex: pageIndex,
+            department: Department.tech,
+            staff: staff,
+            workMode: 'Office',
+            workLocation: null,
+            onNavigate: (index) => updateParent(() => pageIndex = index),
+            onLogout: () {},
+          ),
+        ),
+      ));
+      await tester.tap(find.byTooltip('Open chat'));
+      await tester.pumpAndSettle();
+
+      final composer = find.byKey(const ValueKey('chat-message-composer'));
+      await tester.enterText(composer, 'Hello ');
+      await tester.tap(find.byTooltip('Choose emoji'));
+      await tester.pumpAndSettle();
+      final emojiSearch = find.byWidgetPredicate((widget) =>
+          widget is TextField &&
+          widget.decoration?.hintText == 'Search emojis');
+      await tester.enterText(emojiSearch, 'smile');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('😊'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(composer).controller!.text, 'Hello 😊');
+
+      await tester.tap(find.byTooltip('Choose emoji'));
+      await tester.pumpAndSettle();
+      await tester.enterText(emojiSearch, 'heart');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('❤️'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(composer).controller!.text, 'Hello 😊❤️');
       repository.dispose();
     });
 
@@ -547,4 +1413,3 @@ void main() {
     });
   });
 }
-

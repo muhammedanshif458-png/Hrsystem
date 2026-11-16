@@ -84,6 +84,9 @@ abstract class HRRepository {
   /// Fetch this staff member's daily updates from the backend.
   Future<void> fetchDailyUpdates();
 
+  /// Fetch company-wide birthdays occurring today for the authenticated user.
+  Future<List<BirthdayEmployee>> fetchTodaysBirthdays();
+
   /// Submit a new daily update for this staff member.
   /// [title] and [text] are validated before sending.
   Future<DailyUpdate> submitDailyUpdate(String title, String text);
@@ -99,6 +102,15 @@ abstract class HRRepository {
     int limit = 50,
   });
 
+  Future<StaffChatSearchPage> searchDepartmentMessages({
+    required String departmentKey,
+    required String query,
+    int page = 1,
+    int limit = 30,
+  });
+
+  Future<void> clearDepartmentMessages({required String departmentKey});
+
   /// Send a message from the authenticated staff member to their department conversation.
   Future<StaffChatMessage> sendDepartmentMessage(
     String text, {
@@ -107,10 +119,18 @@ abstract class HRRepository {
   });
 
   /// Delete a message for the local user only
-  Future<void> deleteDepartmentMessageForMe(String messageId);
+  Future<void> deleteDepartmentMessageForMe(String messageId,
+      {required String departmentKey});
 
   /// Delete a message for everyone (if authorized)
-  Future<void> deleteDepartmentMessageForEveryone(String messageId);
+  Future<void> deleteDepartmentMessageForEveryone(String messageId,
+      {required String departmentKey});
+}
+
+class StaffChatSearchPage {
+  const StaffChatSearchPage({required this.messages, required this.hasMore});
+  final List<StaffChatMessage> messages;
+  final bool hasMore;
 }
 
 // ─── Implementation ───────────────────────────────────────────────────────────
@@ -144,6 +164,29 @@ class HRRepositoryImpl implements HRRepository {
   final isFirebaseConnected = ValueNotifier<bool>(false);
   @override
   final departmentChatMessages = ValueNotifier<List<StaffChatMessage>>([]);
+
+  String _requireDepartmentKey(String? requestedDepartment) {
+    final authenticatedDepartment = currentUser.value?.department;
+    final department = requestedDepartment ?? authenticatedDepartment;
+    if (department == null ||
+        department.trim().isEmpty ||
+        department.trim().toLowerCase() == Department.all.toLowerCase()) {
+      throw const FormatException(
+          'Authenticated staff department is unavailable.');
+    }
+    final key = canonicalDepartmentKey(department);
+    if (key.isEmpty || key == Department.all.toLowerCase()) {
+      throw const FormatException('Authenticated staff department is invalid.');
+    }
+    if (requestedDepartment != null &&
+        authenticatedDepartment != null &&
+        canonicalDepartmentKey(authenticatedDepartment) != key) {
+      throw const FormatException(
+          'Requested department does not match the authenticated profile.');
+    }
+    return key;
+  }
+
   void _seedInitialData() {
     final today = DateTimeUtils.getTodayIsoDate();
 
@@ -349,11 +392,7 @@ class HRRepositoryImpl implements HRRepository {
       final rawDept = (empMap?['department'] ?? userMap['department'] ?? '')
           .toString()
           .trim();
-      final staffDept = rawDept.toLowerCase().contains('tele')
-          ? Department.telecalling
-          : (rawDept.toLowerCase().contains('tech')
-              ? Department.tech
-              : (rawDept.isNotEmpty ? rawDept : Department.tech));
+      final staffDept = rawDept;
 
       final staffStatus =
           (empMap?['status']?.toString().toUpperCase() == 'INACTIVE' ||
@@ -450,10 +489,23 @@ class HRRepositoryImpl implements HRRepository {
         }
         final rawSchedule = data['schedule'] ?? data['scheduleSnapshot'];
         final rawShift = data['shift']?.toString();
+        final rawDepartment =
+            data is Map ? data['department'] ?? data['departmentName'] : null;
+        final resolvedDepartment = rawDepartment is Map
+            ? (rawDepartment['name'] ??
+                        rawDepartment['departmentName'] ??
+                        rawDepartment['_id'] ??
+                        rawDepartment['id'])
+                    ?.toString()
+                    .trim() ??
+                ''
+            : rawDepartment?.toString().trim() ?? '';
         final updatedStaff = currentUser.value?.copyWith(
               id: data['employeeId'] ?? currentUser.value?.id,
               name: data['firstName'] ?? currentUser.value?.name,
-              department: data['department'] ?? currentUser.value?.department,
+              department: resolvedDepartment.isNotEmpty
+                  ? resolvedDepartment
+                  : currentUser.value?.department ?? '',
               schedule: rawSchedule is Map
                   ? Map<String, dynamic>.from(rawSchedule)
                   : currentUser.value?.schedule,
@@ -462,7 +514,7 @@ class HRRepositoryImpl implements HRRepository {
             Staff(
               id: data['employeeId'] ?? '',
               name: data['firstName'] ?? '',
-              department: data['department'] ?? Department.tech,
+              department: resolvedDepartment,
               schedule: rawSchedule is Map
                   ? Map<String, dynamic>.from(rawSchedule)
                   : null,
@@ -633,7 +685,8 @@ class HRRepositoryImpl implements HRRepository {
       try {
         response = await _api.delete(ApiConfig.attendanceClearHistory);
       } catch (_) {
-        response = await _api.post(ApiConfig.attendanceClearHistoryPost, body: {});
+        response =
+            await _api.post(ApiConfig.attendanceClearHistoryPost, body: {});
       }
       if (response is! Map || response['success'] != true) {
         throw const FormatException(
@@ -853,7 +906,10 @@ class HRRepositoryImpl implements HRRepository {
       if (dt == 'SICK LEAVE' || dt == 'SICK') return 'Sick Leave';
       if (dt == 'MEDICAL LEAVE' || dt == 'MEDICAL') return 'Medical Leave';
       if (dt == 'CASUAL LEAVE' || dt == 'CASUAL') return 'Casual Leave';
-      if (dt == 'EARNED LEAVE' || dt == 'ANNUAL LEAVE' || dt == 'EARNED' || dt == 'ANNUAL') return 'Earned Leave';
+      if (dt == 'EARNED LEAVE' ||
+          dt == 'ANNUAL LEAVE' ||
+          dt == 'EARNED' ||
+          dt == 'ANNUAL') return 'Earned Leave';
       if (dt == 'UNPAID LEAVE' || dt == 'UNPAID') return 'Unpaid Leave';
       if (dt == 'OTHER') return 'Other';
     }
@@ -1172,6 +1228,37 @@ class HRRepositoryImpl implements HRRepository {
   }
 
   @override
+  Future<List<BirthdayEmployee>> fetchTodaysBirthdays() async {
+    final response = await _api.get(ApiConfig.birthdaysToday);
+    final decoded = response is String ? jsonDecode(response) : response;
+    if (decoded is Map && decoded['success'] == false) {
+      throw FormatException(
+          decoded['message']?.toString() ?? 'Failed to load birthdays.');
+    }
+    final data = decoded is Map ? decoded['data'] : decoded;
+    final raw = data is Map
+        ? data['birthdays']
+        : data is List
+            ? data
+            : decoded is Map
+                ? (decoded['birthdays'] ?? decoded['employees'])
+                : data;
+    if (raw == null) {
+      if (decoded is Map && decoded['data'] == null) return const [];
+      throw const FormatException('Malformed birthdays response.');
+    }
+    if (raw is! List) {
+      throw const FormatException('Malformed birthdays response.');
+    }
+    return raw.map((item) {
+      if (item is! Map) {
+        throw const FormatException('Malformed birthday employee.');
+      }
+      return BirthdayEmployee.fromJson(Map<String, dynamic>.from(item));
+    }).toList();
+  }
+
+  @override
   Future<DailyUpdate> submitDailyUpdate(
     String title,
     String text,
@@ -1232,10 +1319,8 @@ class HRRepositoryImpl implements HRRepository {
     int limit = 50,
   }) async {
     try {
-      final endpoint = departmentKey != null && departmentKey.isNotEmpty
-          ? ApiConfig.staffDepartmentMessages(
-              canonicalDepartmentKey(departmentKey))
-          : ApiConfig.staffChatMessages;
+      final key = _requireDepartmentKey(departmentKey);
+      final endpoint = ApiConfig.staffDepartmentMessages(key);
       final response = await _api.get(
         endpoint,
         queryParams: {'page': page, 'limit': limit},
@@ -1250,9 +1335,12 @@ class HRRepositoryImpl implements HRRepository {
       if (rawData is List) {
         for (final item in rawData) {
           if (item is Map) {
-            messages.add(
-              StaffChatMessage.fromJson(Map<String, dynamic>.from(item)),
-            );
+            final message =
+                StaffChatMessage.fromJson(Map<String, dynamic>.from(item));
+            if (message.conversationType == 'DEPARTMENT' &&
+                canonicalDepartmentKey(message.departmentKey) == key) {
+              messages.add(message);
+            }
           }
         }
       }
@@ -1263,7 +1351,10 @@ class HRRepositoryImpl implements HRRepository {
       // Reconcile with existing messages to avoid dropping in-flight socket messages
       final existingMap = {
         for (final m in departmentChatMessages.value)
-          if (m.id.isNotEmpty) m.id: m
+          if (m.id.isNotEmpty &&
+              m.conversationType == 'DEPARTMENT' &&
+              canonicalDepartmentKey(m.departmentKey) == key)
+            m.id: m
       };
       for (final m in messages) {
         if (m.id.isNotEmpty) {
@@ -1286,6 +1377,46 @@ class HRRepositoryImpl implements HRRepository {
   }
 
   @override
+  Future<StaffChatSearchPage> searchDepartmentMessages({
+    required String departmentKey,
+    required String query,
+    int page = 1,
+    int limit = 30,
+  }) async {
+    final key = _requireDepartmentKey(departmentKey);
+    final response = await _api.get(
+      ApiConfig.staffDepartmentMessageSearch(key),
+      queryParams: {'q': query, 'page': page, 'limit': limit},
+    );
+    final data = response is Map ? response['data'] : response;
+    final messages = data is List
+        ? data
+            .whereType<Map>()
+            .map((item) =>
+                StaffChatMessage.fromJson(Map<String, dynamic>.from(item)))
+            .where((message) =>
+                message.conversationType == 'DEPARTMENT' &&
+                canonicalDepartmentKey(message.departmentKey) == key)
+            .toList()
+        : <StaffChatMessage>[];
+    messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final pagination = response is Map && response['pagination'] is Map
+        ? Map<String, dynamic>.from(response['pagination'] as Map)
+        : const <String, dynamic>{};
+    return StaffChatSearchPage(
+      messages: messages,
+      hasMore: pagination['hasMore'] == true,
+    );
+  }
+
+  @override
+  Future<void> clearDepartmentMessages({required String departmentKey}) async {
+    final key = _requireDepartmentKey(departmentKey);
+    await _api.post(ApiConfig.staffDepartmentChatClear(key));
+    departmentChatMessages.value = [];
+  }
+
+  @override
   Future<StaffChatMessage> sendDepartmentMessage(
     String text, {
     String? departmentKey,
@@ -1296,14 +1427,13 @@ class HRRepositoryImpl implements HRRepository {
       throw Exception('Message cannot be empty');
     }
 
+    final key = _requireDepartmentKey(departmentKey);
+
     final effectiveClientMessageId =
         clientMessageId ?? 'client_${DateTime.now().millisecondsSinceEpoch}';
 
     try {
-      final endpoint = departmentKey != null && departmentKey.isNotEmpty
-          ? ApiConfig.staffDepartmentMessages(
-              canonicalDepartmentKey(departmentKey))
-          : ApiConfig.staffChatMessages;
+      final endpoint = ApiConfig.staffDepartmentMessages(key);
 
       final body = <String, dynamic>{
         'text': trimmedText,
@@ -1324,6 +1454,11 @@ class HRRepositoryImpl implements HRRepository {
       final savedMessage = StaffChatMessage.fromJson(
         Map<String, dynamic>.from(rawData),
       );
+      if (savedMessage.conversationType != 'DEPARTMENT' ||
+          canonicalDepartmentKey(savedMessage.departmentKey) != key) {
+        throw const FormatException(
+            'Message response is missing valid department metadata.');
+      }
 
       // Reconcile local departmentChatMessages
       final currentList =
@@ -1353,9 +1488,11 @@ class HRRepositoryImpl implements HRRepository {
   }
 
   @override
-  Future<void> deleteDepartmentMessageForMe(String messageId) async {
+  Future<void> deleteDepartmentMessageForMe(String messageId,
+      {required String departmentKey}) async {
     try {
-      await _api.patch(ApiConfig.staffChatMessageDeleteForMe(messageId));
+      await _api.patch(ApiConfig.staffDepartmentMessageDeleteForMe(
+          _requireDepartmentKey(departmentKey), messageId));
       departmentChatMessages.value =
           departmentChatMessages.value.where((m) => m.id != messageId).toList();
     } catch (e) {
@@ -1365,11 +1502,16 @@ class HRRepositoryImpl implements HRRepository {
   }
 
   @override
-  Future<void> deleteDepartmentMessageForEveryone(String messageId) async {
+  Future<void> deleteDepartmentMessageForEveryone(String messageId,
+      {required String departmentKey}) async {
     try {
-      await _api.delete(ApiConfig.staffChatMessageDelete(messageId));
-      departmentChatMessages.value =
-          departmentChatMessages.value.where((m) => m.id != messageId).toList();
+      await _api.delete(ApiConfig.staffDepartmentMessageDelete(
+          _requireDepartmentKey(departmentKey), messageId));
+      departmentChatMessages.value = departmentChatMessages.value
+          .map((message) => message.id == messageId
+              ? message.copyWith(deletedForEveryone: true, text: '')
+              : message)
+          .toList();
     } catch (e) {
       debugPrint('deleteDepartmentMessageForEveryone error: $e');
       rethrow;

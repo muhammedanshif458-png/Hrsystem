@@ -8,7 +8,7 @@ class Staff {
     this.email = '',
     this.phoneNumber = '',
     this.address = '',
-    this.department = Department.tech,
+    this.department = '',
     this.role = Role.staff,
     this.joinDate = '',
     this.status = Status.active,
@@ -61,6 +61,30 @@ class Staff {
       resignedDate: resignedDate ?? this.resignedDate,
       schedule: schedule ?? this.schedule,
       shift: shift ?? this.shift,
+    );
+  }
+}
+
+/// A company employee returned by the today's birthdays endpoint.
+class BirthdayEmployee {
+  const BirthdayEmployee({required this.name, this.profileImageUrl});
+
+  final String name;
+  final String? profileImageUrl;
+
+  factory BirthdayEmployee.fromJson(Map<String, dynamic> json) {
+    final name = (json['employeeName'] ?? json['name'] ?? '').toString().trim();
+    final image = (json['profileImageUrl'] ??
+            json['profileImage'] ??
+            json['imageUrl'] ??
+            json['avatarUrl'])
+        ?.toString()
+        .trim();
+    if (name.isEmpty)
+      throw const FormatException('Birthday employee has no name.');
+    return BirthdayEmployee(
+      name: name,
+      profileImageUrl: image == null || image.isEmpty ? null : image,
     );
   }
 }
@@ -373,7 +397,9 @@ class Attendance {
           parsedBreaks.add(AttendanceBreak(
             id: bm['id']?.toString() ?? bm['_id']?.toString() ?? '',
             attendanceId: bm['attendanceId']?.toString() ?? id,
-            breakType: bm['breakType']?.toString() ?? bm['type']?.toString() ?? 'lunch',
+            breakType: bm['breakType']?.toString() ??
+                bm['type']?.toString() ??
+                'lunch',
             startTime: bStart,
             endTime: bEnd,
             durationSeconds: bm['durationSeconds'] is num
@@ -594,7 +620,8 @@ String formatShiftTime(String timeStr) {
   if (trimmed.isEmpty) return '';
 
   // Handle ISO 8601 or date-time strings (e.g. 2026-11-06T05:24:39.985Z or 2026-11-06 05:24:39)
-  if (trimmed.contains('T') || (trimmed.contains('-') && trimmed.contains(':'))) {
+  if (trimmed.contains('T') ||
+      (trimmed.contains('-') && trimmed.contains(':'))) {
     final parsed = DateTime.tryParse(trimmed);
     if (parsed != null) {
       final local = parsed.toLocal();
@@ -1000,15 +1027,37 @@ class DailyUpdate {
   }
 }
 
-/// Normalizes department key to canonical identifier ('tech', 'telecalling', 'hr', etc.)
-/// matching the backend ChatService normalizeDeptKey logic.
+/// Normalizes known department labels and preserves other non-empty department
+/// names as slugs. Missing or unsanitizable metadata returns an empty key.
 String canonicalDepartmentKey(String? dept) {
-  if (dept == null || dept.trim().isEmpty) return 'tech';
+  if (dept == null || dept.trim().isEmpty) return '';
   final key = dept.trim().toLowerCase();
-  if (key.contains('tech') || key.contains('engineer')) return 'tech';
-  if (key.contains('tele') || key.contains('call') || key.contains('client'))
+  final compact = key.replaceAll(RegExp(r'[^a-z0-9]'), '');
+  if ({
+    'tech',
+    'technology',
+    'engineering',
+    'techteam',
+    'techengineering',
+    'techandengineering',
+    'technologyengineering',
+    'technologyandengineering',
+  }.contains(compact)) {
+    return 'tech';
+  }
+  if ({
+    'telecalling',
+    'telecall',
+    'telecallingclientrelations',
+    'telecallingandclientrelations',
+    'callingdept',
+    'callingdepartment',
+    'clientsuccess',
+    'clientrelations',
+  }.contains(compact)) {
     return 'telecalling';
-  if (key.contains('human') || key == 'hr') return 'hr';
+  }
+  if ({'hr', 'humanresources', 'hrdepartment'}.contains(compact)) return 'hr';
   return key
       .replaceAll(RegExp(r'\s+'), '-')
       .replaceAll(RegExp(r'[^a-z0-9_-]'), '');
@@ -1024,6 +1073,7 @@ class StaffChatMessage {
   final String? senderUser;
   final String? senderEmployee;
   final String departmentKey;
+  final String conversationType;
   final String? clientMessageId;
   final String receiverId;
   final String text;
@@ -1040,6 +1090,7 @@ class StaffChatMessage {
     this.senderUser,
     this.senderEmployee,
     this.departmentKey = '',
+    this.conversationType = '',
     this.clientMessageId,
     this.receiverId = '',
     required this.text,
@@ -1107,6 +1158,7 @@ class StaffChatMessage {
     String? senderUser,
     String? senderEmployee,
     String? departmentKey,
+    String? conversationType,
     String? clientMessageId,
     String? receiverId,
     String? text,
@@ -1123,6 +1175,7 @@ class StaffChatMessage {
       senderUser: senderUser ?? this.senderUser,
       senderEmployee: senderEmployee ?? this.senderEmployee,
       departmentKey: departmentKey ?? this.departmentKey,
+      conversationType: conversationType ?? this.conversationType,
       clientMessageId: clientMessageId ?? this.clientMessageId,
       receiverId: receiverId ?? this.receiverId,
       text: text ?? this.text,
@@ -1159,9 +1212,13 @@ class StaffChatMessage {
       senderUser: json['senderUser']?.toString(),
       senderEmployee: json['senderEmployee']?.toString(),
       departmentKey: json['departmentKey']?.toString() ?? '',
+      conversationType:
+          json['conversationType']?.toString().trim().toUpperCase() ?? '',
       clientMessageId: json['clientMessageId']?.toString(),
       receiverId: json['receiverId']?.toString() ?? '',
-      text: json['text']?.toString() ?? json['message']?.toString() ?? '',
+      text: json['deletedForEveryone'] == true
+          ? ''
+          : json['text']?.toString() ?? json['message']?.toString() ?? '',
       timestamp: parsedTime,
       isRead: json['isRead'] == true,
       deletedForEveryone: json['deletedForEveryone'] == true,
@@ -1177,6 +1234,7 @@ class StaffChatMessage {
         if (senderUser != null) 'senderUser': senderUser,
         if (senderEmployee != null) 'senderEmployee': senderEmployee,
         'departmentKey': departmentKey,
+        'conversationType': conversationType,
         if (clientMessageId != null) 'clientMessageId': clientMessageId,
         'receiverId': receiverId,
         'text': text,

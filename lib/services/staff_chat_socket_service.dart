@@ -19,6 +19,12 @@ class StaffChatSocketService {
   final List<void Function(StaffChatMessage message)> _messageListeners = [];
   final List<void Function(String messageId, bool deletedForEveryone)>
       _deleteListeners = [];
+  final List<
+      void Function(
+          String messageId,
+          bool deletedForEveryone,
+          String conversationType,
+          String departmentKey)> _scopedDeleteListeners = [];
   final List<void Function(String deptKey)> _reconnectListeners = [];
   final List<void Function(bool isConnected)> _connectionListeners = [];
 
@@ -46,7 +52,9 @@ class StaffChatSocketService {
     }
 
     // Clean up previous socket if any
+    final activeDepartment = _currentDepartmentKey;
     disposeSocket();
+    _currentDepartmentKey = activeDepartment;
 
     try {
       final opts = io.OptionBuilder()
@@ -111,7 +119,19 @@ class StaffChatSocketService {
       final Map<String, dynamic> json = data is Map<String, dynamic>
           ? data
           : Map<String, dynamic>.from(data as Map);
+      final rawType = json['conversationType'];
+      final rawDepartment = json['departmentKey'];
+      if (rawType is! String ||
+          rawType.trim().toUpperCase() != 'DEPARTMENT' ||
+          rawDepartment is! String ||
+          canonicalDepartmentKey(rawDepartment).isEmpty ||
+          canonicalDepartmentKey(rawDepartment) ==
+              Department.all.toLowerCase()) {
+        return;
+      }
       final msg = StaffChatMessage.fromJson(json);
+      if (msg.conversationType != 'DEPARTMENT' ||
+          canonicalDepartmentKey(msg.departmentKey).isEmpty) return;
 
       for (final listener in List.of(_messageListeners)) {
         try {
@@ -130,11 +150,27 @@ class StaffChatSocketService {
       final messageId =
           json['messageId']?.toString() ?? json['id']?.toString() ?? '';
       final deletedForEveryone = json['deletedForEveryone'] == true;
+      final rawType = json['conversationType'];
+      final rawDepartment = json['departmentKey'];
+      if (rawType is! String ||
+          rawType.trim().toUpperCase() != 'DEPARTMENT' ||
+          rawDepartment is! String ||
+          canonicalDepartmentKey(rawDepartment).isEmpty ||
+          canonicalDepartmentKey(rawDepartment) == Department.all.toLowerCase())
+        return;
+      const conversationType = 'DEPARTMENT';
+      final departmentKey = canonicalDepartmentKey(rawDepartment);
 
       if (messageId.isNotEmpty) {
         for (final listener in List.of(_deleteListeners)) {
           try {
             listener(messageId, deletedForEveryone);
+          } catch (_) {}
+        }
+        for (final listener in List.of(_scopedDeleteListeners)) {
+          try {
+            listener(
+                messageId, deletedForEveryone, conversationType, departmentKey);
           } catch (_) {}
         }
       }
@@ -152,7 +188,9 @@ class StaffChatSocketService {
   /// Subscribes to the canonical department room on the backend.
   void joinDepartment(String deptKey) {
     final canonicalKey = canonicalDepartmentKey(deptKey);
-    if (canonicalKey.isEmpty) return;
+    if (canonicalKey.isEmpty || canonicalKey == Department.all.toLowerCase()) {
+      return;
+    }
 
     if (_currentDepartmentKey != null &&
         _currentDepartmentKey != canonicalKey) {
@@ -179,8 +217,8 @@ class StaffChatSocketService {
   void leaveDepartment() {
     if (_currentDepartmentKey != null) {
       if (!isTestMode && _socket != null && _socket!.connected) {
-        _socket!.emit(
-            'leave_department', {'departmentKey': _currentDepartmentKey});
+        _socket!
+            .emit('leave_department', {'departmentKey': _currentDepartmentKey});
       }
       _currentDepartmentKey = null;
     }
@@ -196,10 +234,28 @@ class StaffChatSocketService {
     }
   }
 
+  void emitTestIncomingPayload(Map<String, dynamic> payload) {
+    _handleIncomingMessage(payload);
+  }
+
+  void emitTestDeletedPayload(Map<String, dynamic> payload) {
+    _handleMessageDeleted(payload);
+  }
+
   void emitTestMessageDeleted(String messageId, bool deletedForEveryone) {
     for (final listener in List.of(_deleteListeners)) {
       try {
         listener(messageId, deletedForEveryone);
+      } catch (_) {}
+    }
+  }
+
+  void emitTestScopedMessageDeleted(String messageId, bool deletedForEveryone,
+      {String conversationType = '', String departmentKey = ''}) {
+    for (final listener in List.of(_scopedDeleteListeners)) {
+      try {
+        listener(
+            messageId, deletedForEveryone, conversationType, departmentKey);
       } catch (_) {}
     }
   }
@@ -229,6 +285,14 @@ class StaffChatSocketService {
       void Function(String messageId, bool deletedForEveryone) listener) {
     _deleteListeners.add(listener);
     return () => _deleteListeners.remove(listener);
+  }
+
+  void Function() addScopedDeleteListener(
+      void Function(String messageId, bool deletedForEveryone,
+              String conversationType, String departmentKey)
+          listener) {
+    _scopedDeleteListeners.add(listener);
+    return () => _scopedDeleteListeners.remove(listener);
   }
 
   void Function() addReconnectListener(void Function(String deptKey) listener) {
@@ -263,6 +327,7 @@ class StaffChatSocketService {
     disposeSocket();
     _messageListeners.clear();
     _deleteListeners.clear();
+    _scopedDeleteListeners.clear();
     _reconnectListeners.clear();
     _connectionListeners.clear();
     _currentDepartmentKey = null;
@@ -270,4 +335,3 @@ class StaffChatSocketService {
     isTestMode = false;
   }
 }
-

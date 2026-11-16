@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'models.dart';
@@ -302,6 +303,42 @@ class _StaffHubShellState extends State<StaffHubShell> {
     setState(() => _chatSearchOpen = !_chatSearchOpen);
   }
 
+  Future<void> _clearDepartmentChat() async {
+    final department = widget.staff.department.trim();
+    if (department.isEmpty ||
+        department.toLowerCase() == Department.all.toLowerCase()) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear chat history?'),
+        content: const Text(
+            'This clears only your chat history. Other department members will keep their messages.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clear chat')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.repository
+          .clearDepartmentMessages(departmentKey: department);
+      if (mounted) setState(() => _chatSearchOpen = false);
+      await widget.repository
+          .fetchDepartmentMessages(departmentKey: department, page: 1);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'Could not clear chat: ${error.toString().replaceFirst('Exception: ', '')}')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final staffTheme = staffHubThemeData(widget.themeMode);
@@ -322,7 +359,6 @@ class _StaffHubShellState extends State<StaffHubShell> {
           searchOpen: _chatSearchOpen,
           staff: widget.staff,
           repository: widget.repository,
-          department: widget.department,
         ),
       3 => _NotificationsPage(
           chatNotifications: _chatNotifications,
@@ -441,6 +477,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
           }
         : titles[widget.pageIndex];
     final isChatPage = widget.pageIndex == 3 && _settingsSubPage == 2;
+    final desktop = MediaQuery.sizeOf(context).width >= 900;
     return Theme(
       data: staffTheme,
       child: MediaQuery(
@@ -450,12 +487,12 @@ class _StaffHubShellState extends State<StaffHubShell> {
         child: Scaffold(
           backgroundColor: staffTheme.scaffoldBackgroundColor,
           appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(52),
+            preferredSize: Size.fromHeight(desktop ? 68 : 56),
             child: AppBar(
               backgroundColor: colorScheme.surface,
               surfaceTintColor: colorScheme.surface,
               elevation: 0,
-              titleSpacing: 14,
+              titleSpacing: desktop ? 26 : 14,
               leading: widget.pageIndex == 3 && _settingsSubPage != null
                   ? IconButton(
                       icon:
@@ -484,7 +521,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                           children: [
                             Text('StaffHub',
                                 style: TextStyle(
-                                    fontSize: 15,
+                                    fontSize: desktop ? 18 : 15,
                                     fontWeight: FontWeight.w700,
                                     color: colorScheme.onSurface)),
                             Text(pageTitle,
@@ -516,13 +553,17 @@ class _StaffHubShellState extends State<StaffHubShell> {
                         size: 20, color: colorScheme.primary),
                   ),
                 if (isChatPage)
-                  IconButton(
-                    tooltip: _chatSearchOpen
-                        ? 'Close search'
-                        : 'Search messages or staff',
-                    onPressed: _toggleChatSearch,
-                    icon: Icon(_chatSearchOpen ? Icons.close : Icons.search,
-                        size: 20, color: colorScheme.onSurfaceVariant),
+                  PopupMenuButton<String>(
+                    tooltip: 'Chat options',
+                    onSelected: (value) {
+                      if (value == 'search') _toggleChatSearch();
+                      if (value == 'clear') _clearDepartmentChat();
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                          value: 'search', child: Text('Search messages')),
+                      PopupMenuItem(value: 'clear', child: Text('Clear chat')),
+                    ],
                   ),
                 if (widget.pageIndex == 3 && _settingsSubPage == 3)
                   Icon(Icons.notifications_none,
@@ -534,66 +575,527 @@ class _StaffHubShellState extends State<StaffHubShell> {
               ],
             ),
           ),
-          body: SafeArea(top: false, child: pages[widget.pageIndex]),
-          bottomNavigationBar: NavigationBarTheme(
-            data: NavigationBarThemeData(
-              iconTheme:
-                  WidgetStateProperty.resolveWith((states) => IconThemeData(
-                        color: states.contains(WidgetState.selected)
-                            ? colorScheme.onPrimaryContainer
-                            : colorScheme.onSurfaceVariant,
-                        size: 19,
-                      )),
-              labelTextStyle:
-                  WidgetStateProperty.resolveWith((states) => TextStyle(
-                        color: states.contains(WidgetState.selected)
-                            ? colorScheme.onPrimaryContainer
-                            : colorScheme.onSurfaceVariant,
-                        fontSize: 12,
-                        fontWeight: states.contains(WidgetState.selected)
-                            ? FontWeight.w600
-                            : FontWeight.w500,
-                      )),
-            ),
-            child: NavigationBar(
-              height: 58,
-              selectedIndex: widget.pageIndex,
-              onDestinationSelected: (index) {
-                if (_settingsSubPage != null) {
-                  setState(() => _settingsSubPage = null);
-                }
-                if (index == 0 || index == 2) {
-                  unawaited(widget.repository.fetchStaffLeaves());
-                }
-                widget.onNavigate(index);
-              },
-              backgroundColor: colorScheme.surface,
-              indicatorColor: colorScheme.primaryContainer,
-              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-              destinations: const [
-                NavigationDestination(
-                    icon: Icon(Icons.home_outlined, size: 19),
-                    selectedIcon: Icon(Icons.home, size: 19),
-                    label: 'Home'),
-                NavigationDestination(
-                    icon: Icon(Icons.fingerprint, size: 19),
-                    selectedIcon: Icon(Icons.fingerprint, size: 19),
-                    label: 'Punch'),
-                NavigationDestination(
-                    icon: Icon(Icons.calendar_month_outlined, size: 19),
-                    selectedIcon: Icon(Icons.calendar_month, size: 19),
-                    label: 'Leave'),
-                NavigationDestination(
-                    icon: Icon(Icons.settings_outlined, size: 19),
-                    selectedIcon: Icon(Icons.settings, size: 19),
-                    label: 'Settings'),
-              ],
-            ),
+          body: SafeArea(
+              top: false,
+              child: desktop
+                  ? Row(children: [
+                      Container(
+                        width: 232,
+                        decoration: BoxDecoration(
+                            color: colorScheme.surface,
+                            border: Border(right: BorderSide(color: _line))),
+                        child: Column(children: [
+                          Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(22, 24, 18, 20),
+                              child: Row(children: [
+                                Container(
+                                    width: 38,
+                                    height: 38,
+                                    decoration: BoxDecoration(
+                                        color: colorScheme.primary,
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    child: Icon(Icons.badge_outlined,
+                                        color: colorScheme.onPrimary,
+                                        size: 22)),
+                                const SizedBox(width: 12),
+                                Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text('StaffHub',
+                                          style: TextStyle(
+                                              fontSize: 17,
+                                              fontWeight: FontWeight.w800,
+                                              color: _ink)),
+                                      Text('PEOPLE PORTAL',
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              letterSpacing: 1.2,
+                                              color: _muted))
+                                    ])
+                              ])),
+                          Padding(
+                              padding: const EdgeInsets.fromLTRB(18, 2, 18, 8),
+                              child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text('WORKSPACE',
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          letterSpacing: 1.2,
+                                          fontWeight: FontWeight.w700,
+                                          color: _muted)))),
+                          for (var i = 0; i < titles.length; i++)
+                            Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 3),
+                                child: Material(
+                                    color: widget.pageIndex == i
+                                        ? colorScheme.primaryContainer
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: ListTile(
+                                        dense: true,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12)),
+                                        leading: Icon(
+                                            [
+                                              Icons.home_outlined,
+                                              Icons.fingerprint,
+                                              Icons.calendar_month_outlined,
+                                              Icons.settings_outlined
+                                            ][i],
+                                            color: widget.pageIndex == i
+                                                ? colorScheme.primary
+                                                : _muted),
+                                        title: Text(titles[i],
+                                            style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight:
+                                                    widget.pageIndex == i
+                                                        ? FontWeight.w700
+                                                        : FontWeight.w500,
+                                                color: widget.pageIndex == i
+                                                    ? colorScheme.primary
+                                                    : _ink)),
+                                        onTap: () {
+                                          if (_settingsSubPage != null)
+                                            setState(
+                                                () => _settingsSubPage = null);
+                                          widget.onNavigate(i);
+                                        }))),
+                          const Spacer(),
+                          Container(
+                              margin: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                  color: _bg,
+                                  borderRadius: BorderRadius.circular(14)),
+                              child: Row(children: [
+                                CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor:
+                                        colorScheme.primaryContainer,
+                                    child: Text(
+                                        widget.staff.name.isEmpty
+                                            ? 'S'
+                                            : widget.staff.name[0]
+                                                .toUpperCase(),
+                                        style: TextStyle(
+                                            color: colorScheme.primary,
+                                            fontWeight: FontWeight.w700))),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                      Text(widget.staff.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              color: _ink)),
+                                      Text(widget.department,
+                                          style: TextStyle(
+                                              fontSize: 11, color: _muted))
+                                    ]))
+                              ]))
+                        ]),
+                      ),
+                      Expanded(child: pages[widget.pageIndex]),
+                    ])
+                  : pages[widget.pageIndex]),
+          bottomNavigationBar: desktop
+              ? null
+              : NavigationBarTheme(
+                  data: NavigationBarThemeData(
+                    iconTheme: WidgetStateProperty.resolveWith(
+                        (states) => IconThemeData(
+                              color: states.contains(WidgetState.selected)
+                                  ? colorScheme.onPrimaryContainer
+                                  : colorScheme.onSurfaceVariant,
+                              size: 19,
+                            )),
+                    labelTextStyle:
+                        WidgetStateProperty.resolveWith((states) => TextStyle(
+                              color: states.contains(WidgetState.selected)
+                                  ? colorScheme.onPrimaryContainer
+                                  : colorScheme.onSurfaceVariant,
+                              fontSize: 12,
+                              fontWeight: states.contains(WidgetState.selected)
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                            )),
+                  ),
+                  child: NavigationBar(
+                    height: 58,
+                    selectedIndex: widget.pageIndex,
+                    onDestinationSelected: (index) {
+                      if (_settingsSubPage != null) {
+                        setState(() => _settingsSubPage = null);
+                      }
+                      if (index == 0 || index == 2) {
+                        unawaited(widget.repository.fetchStaffLeaves());
+                      }
+                      widget.onNavigate(index);
+                    },
+                    backgroundColor: colorScheme.surface,
+                    indicatorColor: colorScheme.primaryContainer,
+                    labelBehavior:
+                        NavigationDestinationLabelBehavior.alwaysShow,
+                    destinations: const [
+                      NavigationDestination(
+                          icon: Icon(Icons.home_outlined, size: 19),
+                          selectedIcon: Icon(Icons.home, size: 19),
+                          label: 'Home'),
+                      NavigationDestination(
+                          icon: Icon(Icons.fingerprint, size: 19),
+                          selectedIcon: Icon(Icons.fingerprint, size: 19),
+                          label: 'Punch'),
+                      NavigationDestination(
+                          icon: Icon(Icons.calendar_month_outlined, size: 19),
+                          selectedIcon: Icon(Icons.calendar_month, size: 19),
+                          label: 'Leave'),
+                      NavigationDestination(
+                          icon: Icon(Icons.settings_outlined, size: 19),
+                          selectedIcon: Icon(Icons.settings, size: 19),
+                          label: 'Settings'),
+                    ],
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BirthdayLoadError extends StatelessWidget {
+  const _BirthdayLoadError({required this.message, required this.onRetry});
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: const Color(0xfffff5f3),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(children: [
+          const Icon(Icons.cake_outlined, color: Color(0xffd66b5d), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text('Birthday notifications unavailable. $message',
+                  style: const TextStyle(fontSize: 12))),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ]),
+      );
+}
+
+class _BirthdayCelebrationCard extends StatefulWidget {
+  const _BirthdayCelebrationCard(
+      {required this.employees, required this.onDismiss});
+  final List<BirthdayEmployee> employees;
+  final VoidCallback onDismiss;
+
+  @override
+  State<_BirthdayCelebrationCard> createState() =>
+      _BirthdayCelebrationCardState();
+}
+
+class _BirthdayCelebrationCardState extends State<_BirthdayCelebrationCard>
+    with TickerProviderStateMixin {
+  late final AnimationController _entryAnimation = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+    reverseDuration: const Duration(milliseconds: 240),
+  );
+  late final AnimationController _confettiAnimation = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+  bool _reduceMotion = false;
+  bool _hasStarted = false;
+  bool _isDismissing = false;
+  late String _employeeFingerprint;
+
+  @override
+  void initState() {
+    super.initState();
+    _employeeFingerprint = _fingerprint(widget.employees);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.of(context).disableAnimations;
+    if (!_hasStarted) {
+      _hasStarted = true;
+      _playEntrance();
+    } else if (_reduceMotion) {
+      _entryAnimation.value = 1;
+      _confettiAnimation.value = 1;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _BirthdayCelebrationCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextFingerprint = _fingerprint(widget.employees);
+    if (nextFingerprint != _employeeFingerprint) {
+      _employeeFingerprint = nextFingerprint;
+      _isDismissing = false;
+      _hasStarted = true;
+      _playEntrance();
+    }
+  }
+
+  String _fingerprint(List<BirthdayEmployee> employees) {
+    final entries = employees.map((employee) => employee.name).toList()..sort();
+    return entries.join('\u001e');
+  }
+
+  void _playEntrance() {
+    if (_reduceMotion) {
+      _entryAnimation.value = 1;
+      _confettiAnimation.value = 1;
+      return;
+    }
+    _entryAnimation.forward(from: 0);
+    _confettiAnimation.forward(from: 0);
+  }
+
+  Future<void> _dismiss() async {
+    if (_isDismissing) return;
+    setState(() => _isDismissing = true);
+    if (_reduceMotion) {
+      widget.onDismiss();
+      return;
+    }
+    try {
+      await _entryAnimation.reverse().orCancel;
+    } on TickerCanceled {
+      return;
+    }
+    if (mounted && _isDismissing) widget.onDismiss();
+  }
+
+  @override
+  void dispose() {
+    _entryAnimation.dispose();
+    _confettiAnimation.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final slide = Tween<Offset>(
+      begin: const Offset(0, -0.16),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _entryAnimation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    ));
+    return FadeTransition(
+      opacity: _entryAnimation,
+      child: SlideTransition(
+        position: slide,
+        child: SizeTransition(
+          sizeFactor: _entryAnimation,
+          axisAlignment: -1,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xfffff4e8), Color(0xffffedf2)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xffffd9c4)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xffe88e75).withValues(alpha: .12),
+                      blurRadius: 14,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        tooltip: 'Dismiss birthday notifications',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 30, minHeight: 30),
+                        onPressed: _isDismissing ? null : _dismiss,
+                        icon: const Icon(Icons.close,
+                            size: 18, color: Color(0xff9a7168)),
+                      ),
+                    ),
+                    for (final employee in widget.employees) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (employee.profileImageUrl != null) ...[
+                              ClipOval(
+                                child: SizedBox(
+                                  width: 30,
+                                  height: 30,
+                                  child: Image.network(
+                                    employee.profileImageUrl!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        const SizedBox.shrink(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            Expanded(
+                              child: Text.rich(
+                                TextSpan(children: [
+                                  TextSpan(
+                                      text:
+                                          '🎉 Happy Birthday, ${employee.name}!\n',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xff392b32))),
+                                  const TextSpan(
+                                      text:
+                                          'Wishing you happiness, success and a wonderful year ahead!\n— Team LY SOFTWARE ❤️',
+                                      style: TextStyle(
+                                          color: Color(0xff685a60),
+                                          height: 1.35)),
+                                ]),
+                                style: const TextStyle(fontSize: 11.5),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Positioned(
+                top: -15,
+                left: 18,
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _confettiAnimation,
+                    builder: (context, _) => CustomPaint(
+                      size: const Size(66, 50),
+                      painter: _BirthdayConfettiPainter(
+                        progress: _confettiAnimation.value,
+                        mirrored: false,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: -15,
+                right: 16,
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _confettiAnimation,
+                    builder: (context, _) => CustomPaint(
+                      size: const Size(66, 50),
+                      painter: _BirthdayConfettiPainter(
+                        progress: _confettiAnimation.value,
+                        mirrored: true,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
+}
+
+class _BirthdayConfettiPainter extends CustomPainter {
+  const _BirthdayConfettiPainter(
+      {required this.progress, required this.mirrored});
+
+  final double progress;
+  final bool mirrored;
+
+  static const _colors = [
+    Color(0xffe28a9c),
+    Color(0xffffc17b),
+    Color(0xffbd95d8),
+    Color(0xffe9a6b0),
+    Color(0xffffd27f),
+  ];
+  static const _starts = [
+    Offset(12, 33),
+    Offset(25, 19),
+    Offset(39, 30),
+    Offset(50, 13),
+    Offset(58, 35),
+  ];
+  static const _drifts = [
+    Offset(-8, -17),
+    Offset(-3, -22),
+    Offset(2, -18),
+    Offset(5, -23),
+    Offset(9, -15),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var i = 0; i < _starts.length; i++) {
+      final delay = i * .075;
+      final t = ((progress - delay) / (1 - delay)).clamp(0.0, 1.0);
+      if (t <= 0) continue;
+      final start = _starts[i];
+      final drift = _drifts[i];
+      final x = mirrored ? size.width - start.dx : start.dx;
+      final dx = mirrored ? -drift.dx : drift.dx;
+      final point = Offset(
+        x + dx * Curves.easeOut.transform(t),
+        start.dy + drift.dy * Curves.easeOut.transform(t),
+      );
+      final paint = Paint()
+        ..color = _colors[i].withValues(alpha: (1 - t) * .9)
+        ..style = PaintingStyle.fill;
+      canvas.save();
+      canvas.translate(point.dx, point.dy);
+      canvas.rotate((mirrored ? -1 : 1) * t * (i.isEven ? 2.2 : -2.2));
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(center: Offset.zero, width: 5, height: 2.5),
+          const Radius.circular(1.25),
+        ),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BirthdayConfettiPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.mirrored != mirrored;
 }
 
 class _HomePage extends StatefulWidget {
@@ -642,6 +1144,10 @@ class _HomePage extends StatefulWidget {
 class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
   // Daily update state
   bool _isLoadingUpdate = false;
+  bool _isLoadingBirthdays = true;
+  bool _birthdayNoticeDismissed = false;
+  String? _birthdayError;
+  List<BirthdayEmployee> _todaysBirthdays = const [];
   bool _breakActionInFlight = false;
   String? _updateError;
   late final Timer _activeTimeTimer;
@@ -660,8 +1166,28 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
     });
     widget.repository.dailyUpdatesList.addListener(_onUpdatesChanged);
     widget.repository.leaveRequests.addListener(_onLeavesChanged);
+    unawaited(_loadTodaysBirthdays());
     _refreshDailyUpdates();
     unawaited(widget.repository.fetchStaffLeaves());
+  }
+
+  Future<void> _loadTodaysBirthdays() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingBirthdays = true;
+      _birthdayError = null;
+    });
+    try {
+      final birthdays = await widget.repository.fetchTodaysBirthdays();
+      if (mounted) setState(() => _todaysBirthdays = birthdays);
+    } catch (e) {
+      if (mounted) {
+        setState(() =>
+            _birthdayError = e.toString().replaceFirst('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingBirthdays = false);
+    }
   }
 
   void _onUpdatesChanged() {
@@ -883,7 +1409,30 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
     final activeLeave = _displayLeaveRequest;
     return _ScrollPage(children: [
       const SizedBox(height: 12),
-      Text('Wednesday, 24 Sep', style: TextStyle(fontSize: 14, color: _muted)),
+      Text(
+          '${const [
+            'Monday',
+            'Tuesday',
+            'Wednesday',
+            'Thursday',
+            'Friday',
+            'Saturday',
+            'Sunday'
+          ][now.weekday - 1]}, ${now.day} ${const [
+            'Jan',
+            'Feb',
+            'Mar',
+            'Apr',
+            'May',
+            'Jun',
+            'Jul',
+            'Aug',
+            'Sep',
+            'Oct',
+            'Nov',
+            'Dec'
+          ][now.month - 1]}',
+          style: TextStyle(fontSize: 14, color: _muted)),
       const SizedBox(height: 5),
       Row(children: [
         Expanded(
@@ -901,6 +1450,19 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
             style: TextStyle(fontSize: 12, color: _muted)),
       ],
       const SizedBox(height: 18),
+      if (_isLoadingBirthdays)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 14),
+          child: LinearProgressIndicator(minHeight: 2),
+        )
+      else if (_birthdayError != null)
+        _BirthdayLoadError(
+            message: _birthdayError!, onRetry: _loadTodaysBirthdays)
+      else if (_todaysBirthdays.isNotEmpty && !_birthdayNoticeDismissed)
+        _BirthdayCelebrationCard(
+          employees: _todaysBirthdays,
+          onDismiss: () => setState(() => _birthdayNoticeDismissed = true),
+        ),
       if (widget.attendanceError != null) ...[
         Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -1018,8 +1580,7 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
                     const SizedBox(height: 6),
                     if (activeBreak != null) ...[
                       const SizedBox(height: 8),
-                      Text(
-                          activeBreak.remainingTimeText(now),
+                      Text(activeBreak.remainingTimeText(now),
                           style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
@@ -1875,14 +2436,11 @@ class _PunchPageState extends State<_PunchPage> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: _isClearingHistory
-                      ? _muted
-                      : const Color(0xffd84747),
+                  color: _isClearingHistory ? _muted : const Color(0xffd84747),
                 ),
               ),
               style: TextButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 visualDensity: VisualDensity.compact,
               ),
             ),
@@ -2021,21 +2579,21 @@ class _AttendanceDetailBottomSheetState
 
     final defaultScheduledCheckIn =
         departmentName.toLowerCase().contains('tele') ? '09:00 AM' : '10:00 AM';
-    final scheduledCheckInDisplay = record.scheduledCheckIn != null &&
-            record.scheduledCheckIn!.isNotEmpty
-        ? formatShiftTime(record.scheduledCheckIn!)
-        : (record.scheduleSnapshot?['scheduledCheckIn'] != null
-            ? formatShiftTime(
-                record.scheduleSnapshot!['scheduledCheckIn'].toString())
-            : defaultScheduledCheckIn);
+    final scheduledCheckInDisplay =
+        record.scheduledCheckIn != null && record.scheduledCheckIn!.isNotEmpty
+            ? formatShiftTime(record.scheduledCheckIn!)
+            : (record.scheduleSnapshot?['scheduledCheckIn'] != null
+                ? formatShiftTime(
+                    record.scheduleSnapshot!['scheduledCheckIn'].toString())
+                : defaultScheduledCheckIn);
 
-    final scheduledCheckOutDisplay = record.scheduledCheckOut != null &&
-            record.scheduledCheckOut!.isNotEmpty
-        ? formatShiftTime(record.scheduledCheckOut!)
-        : (record.scheduleSnapshot?['scheduledCheckOut'] != null
-            ? formatShiftTime(
-                record.scheduleSnapshot!['scheduledCheckOut'].toString())
-            : '06:00 PM');
+    final scheduledCheckOutDisplay =
+        record.scheduledCheckOut != null && record.scheduledCheckOut!.isNotEmpty
+            ? formatShiftTime(record.scheduledCheckOut!)
+            : (record.scheduleSnapshot?['scheduledCheckOut'] != null
+                ? formatShiftTime(
+                    record.scheduleSnapshot!['scheduledCheckOut'].toString())
+                : '06:00 PM');
 
     final lateArrivalDisplay = record.isLate
         ? (record.minutesLate != null && record.minutesLate! > 0
@@ -2110,7 +2668,9 @@ class _AttendanceDetailBottomSheetState
                     isOngoing
                         ? const Color(0xfffff7e6)
                         : const Color(0xffe8f8ef),
-                    isOngoing ? const Color(0xffd48b0c) : const Color(0xff198754),
+                    isOngoing
+                        ? const Color(0xffd48b0c)
+                        : const Color(0xff198754),
                   ),
                   const SizedBox(width: 8),
                   IconButton(
@@ -2124,7 +2684,8 @@ class _AttendanceDetailBottomSheetState
             Expanded(
               child: ListView(
                 controller: scrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                 children: [
                   if (isOngoing) ...[
                     Container(
@@ -2157,10 +2718,12 @@ class _AttendanceDetailBottomSheetState
                   ],
 
                   // 1. Attendance Summary
-                  _sheetSectionHeader(Icons.summarize_outlined, 'Attendance Summary'),
+                  _sheetSectionHeader(
+                      Icons.summarize_outlined, 'Attendance Summary'),
                   const SizedBox(height: 8),
                   _sheetCard([
-                    _sheetRow('Attendance Date', _formatDisplayDate(record.date)),
+                    _sheetRow(
+                        'Attendance Date', _formatDisplayDate(record.date)),
                     _sheetDivider(),
                     _sheetRow('Department', departmentName),
                     _sheetDivider(),
@@ -2183,14 +2746,14 @@ class _AttendanceDetailBottomSheetState
                       ),
                     ),
                     _sheetDivider(),
-                    _sheetRow(
-                        'Total Working Duration', workingDurationDisplay),
+                    _sheetRow('Total Working Duration', workingDurationDisplay),
                   ]),
 
                   const SizedBox(height: 18),
 
                   // 2. Punch Details
-                  _sheetSectionHeader(Icons.punch_clock_outlined, 'Punch Details'),
+                  _sheetSectionHeader(
+                      Icons.punch_clock_outlined, 'Punch Details'),
                   const SizedBox(height: 8),
                   _sheetCard([
                     _sheetRow('Check-in Time', checkInDisplay),
@@ -2226,8 +2789,8 @@ class _AttendanceDetailBottomSheetState
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('Total Breaks',
-                                  style: TextStyle(
-                                      fontSize: 11, color: _muted)),
+                                  style:
+                                      TextStyle(fontSize: 11, color: _muted)),
                               const SizedBox(height: 2),
                               Text(totalBreaksDisplay,
                                   style: TextStyle(
@@ -2244,8 +2807,8 @@ class _AttendanceDetailBottomSheetState
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('Total Break Duration',
-                                  style: TextStyle(
-                                      fontSize: 11, color: _muted)),
+                                  style:
+                                      TextStyle(fontSize: 11, color: _muted)),
                               const SizedBox(height: 2),
                               Text(totalBreakDurationDisplay,
                                   style: TextStyle(
@@ -2292,16 +2855,13 @@ class _AttendanceDetailBottomSheetState
   }
 
   Widget _buildBreakRow(BuildContext context, int index, AttendanceBreak b) {
-    final startDisplay =
-        TimeOfDay.fromDateTime(b.startTime).format(context);
+    final startDisplay = TimeOfDay.fromDateTime(b.startTime).format(context);
     final endDisplay = b.endTime != null
         ? TimeOfDay.fromDateTime(b.endTime!).format(context)
         : 'Active';
     final durationDisplay = b.durationMinutes != null && b.durationMinutes! > 0
         ? '${b.durationMinutes} min'
-        : (b.isCompleted
-            ? '${b.durationSeconds ~/ 60} min'
-            : 'Ongoing');
+        : (b.isCompleted ? '${b.durationSeconds ~/ 60} min' : 'Ongoing');
 
     final breakName = _breakTypeLabel(b.breakType);
 
@@ -2338,9 +2898,7 @@ class _AttendanceDetailBottomSheetState
             Text(
               'Remarks: ${b.remarks}',
               style: TextStyle(
-                  fontSize: 11,
-                  color: _muted,
-                  fontStyle: FontStyle.italic),
+                  fontSize: 11, color: _muted, fontStyle: FontStyle.italic),
             ),
           ],
         ],
@@ -2376,8 +2934,7 @@ class _AttendanceDetailBottomSheetState
         ),
       );
 
-  Widget _sheetDivider() =>
-      Divider(height: 14, thickness: 0.8, color: _line);
+  Widget _sheetDivider() => Divider(height: 14, thickness: 0.8, color: _line);
 
   Widget _sheetRow(String label, String value,
           {Color? valueColor, Widget? trailingBadge}) =>
@@ -2438,8 +2995,7 @@ String _formatDisplayDate(String isoOrDate) {
     'Nov',
     'Dec'
   ];
-  final weekday =
-      (d.weekday >= 1 && d.weekday <= 7) ? days[d.weekday - 1] : '';
+  final weekday = (d.weekday >= 1 && d.weekday <= 7) ? days[d.weekday - 1] : '';
   final month = (d.month >= 1 && d.month <= 12) ? months[d.month] : '';
   final dayStr = d.day.toString().padLeft(2, '0');
   return '$weekday, $dayStr $month ${d.year}';
@@ -2656,9 +3212,9 @@ class _LeavePageState extends State<_LeavePage> {
         return;
       }
       if (_type == 'Medical Leave') {
-        final hasProof = (_medicalProofBytes != null &&
-                _medicalProofBytes!.isNotEmpty) ||
-            (_medicalProofName != null && _medicalProofName!.isNotEmpty);
+        final hasProof =
+            (_medicalProofBytes != null && _medicalProofBytes!.isNotEmpty) ||
+                (_medicalProofName != null && _medicalProofName!.isNotEmpty);
         if (!hasProof) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2669,9 +3225,10 @@ class _LeavePageState extends State<_LeavePage> {
         }
       }
 
-      final hasAttachment = (_type == 'Medical Leave' || _type == 'Sick Leave') &&
-          ((_medicalProofBytes != null && _medicalProofBytes!.isNotEmpty) ||
-              (_medicalProofName != null && _medicalProofName!.isNotEmpty));
+      final hasAttachment =
+          (_type == 'Medical Leave' || _type == 'Sick Leave') &&
+              ((_medicalProofBytes != null && _medicalProofBytes!.isNotEmpty) ||
+                  (_medicalProofName != null && _medicalProofName!.isNotEmpty));
 
       // Submit to repository
       await widget.repository.requestLeave(
@@ -2893,11 +3450,11 @@ class _LeavePageState extends State<_LeavePage> {
                                 'Submit as soon as possible. Medical proof is optional.',
                               'Medical Leave' =>
                                 'Submit as soon as possible. Medical proof is required.',
-                              _ =>
-                                'Submit as soon as possible.',
+                              _ => 'Submit as soon as possible.',
                             },
                             style: TextStyle(fontSize: 11, color: mutedColor)),
-                        if (_type == 'Medical Leave' || _type == 'Sick Leave') ...[
+                        if (_type == 'Medical Leave' ||
+                            _type == 'Sick Leave') ...[
                           const SizedBox(height: 12),
                           _smallLabel(
                             _type == 'Medical Leave'
@@ -2911,8 +3468,7 @@ class _LeavePageState extends State<_LeavePage> {
                               _type == 'Medical Leave'
                                   ? 'Medical document not uploaded'
                                   : 'No document attached (Optional)',
-                              style:
-                                  TextStyle(fontSize: 12, color: mutedColor),
+                              style: TextStyle(fontSize: 12, color: mutedColor),
                             ),
                           Wrap(
                               spacing: 8,
@@ -2920,7 +3476,8 @@ class _LeavePageState extends State<_LeavePage> {
                               children: [
                                 OutlinedButton.icon(
                                     onPressed: _pickMedicalProof,
-                                    icon: const Icon(Icons.attach_file, size: 17),
+                                    icon:
+                                        const Icon(Icons.attach_file, size: 17),
                                     label: Text(_medicalProofName == null
                                         ? (_type == 'Medical Leave'
                                             ? 'Attach Medical Proof'
@@ -2929,7 +3486,8 @@ class _LeavePageState extends State<_LeavePage> {
                                 if (_medicalProofName != null)
                                   OutlinedButton.icon(
                                       onPressed: _previewMedicalProof,
-                                      icon: const Icon(Icons.visibility_outlined,
+                                      icon: const Icon(
+                                          Icons.visibility_outlined,
                                           size: 17),
                                       label: const Text('View Document')),
                                 if (_medicalProofName != null)
@@ -3775,19 +4333,16 @@ class _MedicalDocumentPreviewDialogState
       );
 }
 
-
 class _ChatPage extends StatefulWidget {
   const _ChatPage({
     required this.searchOpen,
     required this.staff,
     required this.repository,
-    required this.department,
   });
 
   final bool searchOpen;
   final Staff staff;
   final HRRepository repository;
-  final String department;
 
   @override
   State<_ChatPage> createState() => _ChatPageState();
@@ -3801,6 +4356,27 @@ class _ChatPageState extends State<_ChatPage> {
   bool _isLoading = false;
   String? _errorMessage;
   bool _isSending = false;
+  bool _hasMoreHistory = true;
+  int _historyPage = 1;
+  bool _loadingHistory = false;
+  final List<String> _recentEmojis = [];
+  Timer? _searchDebounce;
+  List<StaffChatMessage> _searchResults = [];
+  bool _searchLoading = false;
+  bool _searchHasMore = false;
+  String? _searchError;
+  int _searchPage = 1;
+
+  String get _profileDepartment => widget.staff.department.trim();
+  bool get _hasDepartment =>
+      _profileDepartment.isNotEmpty &&
+      _profileDepartment.toLowerCase() != Department.all.toLowerCase() &&
+      canonicalDepartmentKey(_profileDepartment).isNotEmpty &&
+      canonicalDepartmentKey(_profileDepartment) !=
+          Department.all.toLowerCase();
+  String get _departmentKey =>
+      !_hasDepartment ? '' : canonicalDepartmentKey(_profileDepartment);
+  String get _departmentTitle => _hasDepartment ? _profileDepartment : '';
 
   void Function()? _removeMessageListener;
   void Function()? _removeDeleteListener;
@@ -3811,8 +4387,15 @@ class _ChatPageState extends State<_ChatPage> {
   @override
   void initState() {
     super.initState();
+    _messagesScrollController.addListener(_loadOlderMessages);
     _repoListener = () {
-      if (mounted) setState(() {});
+      if (mounted) {
+        if (widget.repository.departmentChatMessages.value.isEmpty) {
+          _historyPage = 1;
+          _hasMoreHistory = true;
+        }
+        setState(() {});
+      }
     };
     widget.repository.departmentChatMessages.addListener(_repoListener!);
     _loadMessages();
@@ -3824,15 +4407,28 @@ class _ChatPageState extends State<_ChatPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.searchOpen && !widget.searchOpen) {
       _searchController.clear();
+      _searchResults = [];
+      _searchError = null;
+      _searchLoading = false;
+      _searchHasMore = false;
+      _searchDebounce?.cancel();
     }
-    if (oldWidget.department != widget.department) {
+    if (oldWidget.staff.department != widget.staff.department) {
+      _historyPage = 1;
+      _hasMoreHistory = true;
+      _removeMessageListener?.call();
+      _removeDeleteListener?.call();
+      _removeReconnectListener?.call();
+      _removeConnectionListener?.call();
       _loadMessages();
-      StaffChatSocketService().joinDepartment(widget.department);
+      StaffChatSocketService().leaveDepartment();
+      _initSocket();
     }
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     if (_repoListener != null) {
       widget.repository.departmentChatMessages.removeListener(_repoListener!);
     }
@@ -3849,6 +4445,15 @@ class _ChatPageState extends State<_ChatPage> {
   }
 
   Future<void> _loadMessages({bool quiet = false}) async {
+    if (!_hasDepartment) {
+      if (mounted && !quiet) {
+        setState(() {
+          _errorMessage = 'Your profile has no assigned department.';
+          _isLoading = false;
+        });
+      }
+      return;
+    }
     if (!quiet) {
       setState(() {
         _isLoading = true;
@@ -3857,7 +4462,7 @@ class _ChatPageState extends State<_ChatPage> {
     }
     try {
       await widget.repository.fetchDepartmentMessages(
-        departmentKey: widget.department,
+        departmentKey: _profileDepartment,
       );
       if (mounted) {
         setState(() {
@@ -3879,19 +4484,108 @@ class _ChatPageState extends State<_ChatPage> {
     }
   }
 
+  Future<void> _loadOlderMessages() async {
+    if (!_messagesScrollController.hasClients ||
+        _messagesScrollController.position.pixels > 80) return;
+    if (_searchController.text.trim().isNotEmpty) {
+      if (_searchLoading || !_searchHasMore) return;
+      await _loadMoreSearchResults();
+      return;
+    }
+    if (_loadingHistory || !_hasMoreHistory) return;
+    final current = widget.repository.departmentChatMessages.value;
+    if (current.isEmpty) return;
+    _loadingHistory = true;
+    try {
+      _historyPage++;
+      final result = await widget.repository.fetchDepartmentMessages(
+          departmentKey: _profileDepartment, page: _historyPage);
+      if (result.length == current.length) _hasMoreHistory = false;
+    } catch (_) {
+      _historyPage--;
+    } finally {
+      _loadingHistory = false;
+    }
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    final query = value.trim();
+    if (query.isEmpty) {
+      setState(() {
+        _searchResults = [];
+        _searchError = null;
+        _searchLoading = false;
+        _searchHasMore = false;
+      });
+      return;
+    }
+    setState(() {
+      _searchLoading = true;
+      _searchError = null;
+    });
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      _runMessageSearch(query, reset: true);
+    });
+  }
+
+  Future<void> _runMessageSearch(String query, {required bool reset}) async {
+    final page = reset ? 1 : _searchPage + 1;
+    if (!_hasDepartment || _searchLoading && !reset) return;
+    if (reset && mounted) {
+      setState(() {
+        _searchPage = 1;
+        _searchResults = [];
+        _searchLoading = true;
+        _searchError = null;
+      });
+    }
+    try {
+      final response = await widget.repository.searchDepartmentMessages(
+        departmentKey: _profileDepartment,
+        query: query,
+        page: page,
+      );
+      if (!mounted || query != _searchController.text.trim()) return;
+      final currentUserId = widget.staff.id;
+      final scoped = response.messages.where((message) =>
+          !message.deletedByIds.contains(currentUserId) &&
+          message.conversationType == 'DEPARTMENT' &&
+          canonicalDepartmentKey(message.departmentKey) == _departmentKey);
+      setState(() {
+        if (reset) _searchResults = [];
+        final ids = _searchResults.map((m) => m.id).toSet();
+        _searchResults.addAll(scoped.where((m) => !ids.contains(m.id)));
+        _searchResults.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        _searchPage = page;
+        _searchHasMore = response.hasMore;
+        _searchLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _searchError = error.toString().replaceFirst('Exception: ', '');
+        _searchLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadMoreSearchResults() async {
+    if (_searchLoading || !_searchHasMore) return;
+    await _runMessageSearch(_searchController.text.trim(), reset: false);
+  }
+
   void _initSocket() {
+    if (!_hasDepartment) return;
     final socketService = StaffChatSocketService();
-    socketService.joinDepartment(widget.department);
+    socketService.joinDepartment(_profileDepartment);
 
     _removeMessageListener = socketService.addMessageListener((incoming) {
       if (!mounted) return;
-      final currentDept = canonicalDepartmentKey(widget.department);
+      if (incoming.conversationType != 'DEPARTMENT') return;
+      final currentDept = _departmentKey;
       final msgDept = canonicalDepartmentKey(incoming.departmentKey);
-      if (msgDept.isNotEmpty &&
-          currentDept.isNotEmpty &&
-          msgDept != currentDept) {
-        return;
-      }
+      if (msgDept != currentDept) return;
 
       final list = List<StaffChatMessage>.from(
           widget.repository.departmentChatMessages.value);
@@ -3911,13 +4605,26 @@ class _ChatPageState extends State<_ChatPage> {
       _scrollToBottom();
     });
 
-    _removeDeleteListener =
-        socketService.addDeleteListener((messageId, deletedForEveryone) {
+    _removeDeleteListener = socketService.addScopedDeleteListener(
+        (messageId, deletedForEveryone, conversationType, departmentKey) {
       if (!mounted) return;
-      final list = widget.repository.departmentChatMessages.value
-          .where((m) => m.id != messageId)
+      if (conversationType != 'DEPARTMENT' ||
+          !_hasDepartment ||
+          !deletedForEveryone ||
+          canonicalDepartmentKey(departmentKey) != _departmentKey) return;
+      widget.repository.departmentChatMessages.value = widget
+          .repository.departmentChatMessages.value
+          .map((message) => message.id == messageId && deletedForEveryone
+              ? message.copyWith(deletedForEveryone: true, text: '')
+              : message)
+          .where((message) => message.id != messageId || deletedForEveryone)
           .toList();
-      widget.repository.departmentChatMessages.value = list;
+      _searchResults = _searchResults
+          .map((message) => message.id == messageId
+              ? message.copyWith(deletedForEveryone: true, text: '')
+              : message)
+          .toList();
+      setState(() {});
     });
 
     _removeReconnectListener = socketService.addReconnectListener((deptKey) {
@@ -3945,6 +4652,7 @@ class _ChatPageState extends State<_ChatPage> {
   }
 
   Future<void> _sendMessage() async {
+    if (!_hasDepartment) return;
     final text = _composerController.text.trim();
     if (text.isEmpty || _isSending) return;
 
@@ -3960,7 +4668,7 @@ class _ChatPageState extends State<_ChatPage> {
       _searchController.clear();
       await widget.repository.sendDepartmentMessage(
         text,
-        departmentKey: widget.department,
+        departmentKey: _profileDepartment,
         clientMessageId: clientMessageId,
       );
       _scrollToBottom();
@@ -4034,19 +4742,229 @@ class _ChatPageState extends State<_ChatPage> {
             ])),
       );
 
+  Future<void> _showMessageActions(StaffChatMessage message) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(
+            leading: const Icon(Icons.person_remove_outlined),
+            title: const Text('Delete for me'),
+            onTap: () => Navigator.pop(context, 'me')),
+        if (message.isSentBy(widget.staff))
+          ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Delete for everyone'),
+              onTap: () => Navigator.pop(context, 'everyone')),
+      ])),
+    );
+    if (action == null || !mounted) return;
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: const Text('Delete message?'),
+              content: Text(action == 'everyone'
+                  ? 'This message will be removed for everyone.'
+                  : 'This message will be removed from your chat.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Cancel')),
+                TextButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Delete'))
+              ],
+            ));
+    if (confirmed != true) return;
+    try {
+      if (action == 'me') {
+        await widget.repository.deleteDepartmentMessageForMe(message.id,
+            departmentKey: _profileDepartment);
+        _searchResults.removeWhere((item) => item.id == message.id);
+      } else {
+        await widget.repository.deleteDepartmentMessageForEveryone(message.id,
+            departmentKey: _profileDepartment);
+        _searchResults = _searchResults
+            .map((item) => item.id == message.id
+                ? item.copyWith(deletedForEveryone: true, text: '')
+                : item)
+            .toList();
+      }
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'Could not delete message: ${error.toString().replaceFirst('Exception: ', '')}')));
+    }
+  }
+
+  Future<void> _showEmojiPicker() async {
+    const categories = <String, String>{
+      'Smileys & People':
+          '😀 😃 😄 😁 😆 😅 😂 🙂 🙃 😉 😊 😍 🥰 😎 🤔 😭 👋 👍 🙌 ❤️',
+      'Animals & Nature': '🐶 🐱 🐭 🐰 🦊 🐻 🐼 🐸 🐵 🐦 🌸 🌻 🌳 🍀 🌈 ☀️',
+      'Food & Drink': '🍎 🍊 🍋 🍇 🍉 🍓 🍒 🥑 🍕 🍔 🍟 🌮 🍜 🍰 ☕ 🧋',
+      'Activities': '⚽ 🏀 🏈 ⚾ 🎾 🏆 🎯 🎮 🎨 🎤 🎉 🎂',
+      'Travel & Places': '🚗 🚕 🚌 🚆 ✈️ 🚀 🚲 🏠 🏢 🏖️ 🏔️ 🌍',
+      'Objects': '⌚ 📱 💻 💡 📚 ✏️ 🔑 🎁 📌 🔔',
+      'Symbols': '❤️ 💯 ✅ ❌ ⭐ 🔥 💬 ➡️ ⚠️ ♻️',
+      'Flags': '🏳️ 🏴 🇺🇸 🇬🇧 🇮🇳 🇨🇦 🇦🇺 🇯🇵 🇫🇷 🇩🇪',
+    };
+    const emojiNames = <String, String>{
+      '😀': 'grinning happy smile face',
+      '😃': 'smiling happy face',
+      '😄': 'smile happy face',
+      '😁': 'grin happy',
+      '😆': 'laugh funny',
+      '😅': 'sweat laugh relief',
+      '😂': 'tears joy laugh funny',
+      '🙂': 'smile happy',
+      '🙃': 'upside down silly',
+      '😉': 'wink',
+      '😊': 'blush smile happy',
+      '😍': 'love heart eyes',
+      '🥰': 'love hearts',
+      '😎': 'cool sunglasses',
+      '🤔': 'think question',
+      '😭': 'cry sad tears',
+      '👋': 'wave hello goodbye',
+      '👍': 'thumbs up yes good',
+      '🙌': 'celebrate praise hands',
+      '❤️': 'heart love red',
+      '🐶': 'dog puppy',
+      '🐱': 'cat kitten',
+      '🐰': 'rabbit bunny',
+      '🦊': 'fox',
+      '🐻': 'bear',
+      '🐼': 'panda',
+      '🐸': 'frog',
+      '🌸': 'flower blossom',
+      '🌻': 'sunflower',
+      '🌳': 'tree nature',
+      '🌈': 'rainbow',
+      '☀️': 'sun sunny',
+      '🍎': 'apple fruit',
+      '🍕': 'pizza food',
+      '🍔': 'burger food',
+      '🍰': 'cake dessert',
+      '☕': 'coffee drink',
+      '⚽': 'football soccer sport',
+      '🏀': 'basketball sport',
+      '🏆': 'trophy winner',
+      '🎮': 'game controller',
+      '🎉': 'party celebration',
+      '🚗': 'car drive',
+      '✈️': 'airplane travel',
+      '🏠': 'house home',
+      '🌍': 'earth world',
+      '📱': 'phone mobile',
+      '💻': 'computer laptop',
+      '💡': 'idea light bulb',
+      '📚': 'books read',
+      '🎁': 'gift present',
+      '✅': 'check done yes',
+      '❌': 'cross no wrong',
+      '⭐': 'star favorite',
+      '🔥': 'fire hot',
+      '🇮🇳': 'india flag',
+      '🇺🇸': 'united states usa flag',
+      '🇬🇧': 'united kingdom uk flag',
+    };
+    var searchQuery = '';
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+          builder: (context, refresh) => SafeArea(
+              child: SizedBox(
+                  height: 360,
+                  child: DefaultTabController(
+                      length: categories.length + 1,
+                      child: Column(children: [
+                        Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                            child: TextField(
+                                onChanged: (value) =>
+                                    refresh(() => searchQuery = value),
+                                decoration: const InputDecoration(
+                                    prefixIcon: Icon(Icons.search),
+                                    hintText: 'Search emojis',
+                                    isDense: true))),
+                        if (searchQuery.isNotEmpty)
+                          Expanded(
+                              child: _emojiGrid(
+                                  categories.values
+                                      .expand((value) => value.split(' '))
+                                      .toSet()
+                                      .where((emoji) =>
+                                          emojiNames[emoji]?.contains(
+                                                  searchQuery.toLowerCase()) ==
+                                              true ||
+                                          emoji.contains(searchQuery))
+                                      .toList(),
+                                  (emoji) => Navigator.pop(context, emoji)))
+                        else ...[
+                          const TabBar(isScrollable: true, tabs: [
+                            Tab(text: 'Recent'),
+                            Tab(text: 'Smileys'),
+                            Tab(text: 'Nature'),
+                            Tab(text: 'Food'),
+                            Tab(text: 'Activities'),
+                            Tab(text: 'Travel'),
+                            Tab(text: 'Objects'),
+                            Tab(text: 'Symbols'),
+                            Tab(text: 'Flags')
+                          ]),
+                          Expanded(
+                              child: TabBarView(children: [
+                            _emojiGrid(_recentEmojis,
+                                (emoji) => Navigator.pop(context, emoji)),
+                            ...categories.values.map((emojis) => _emojiGrid(
+                                emojis.split(' '),
+                                (emoji) => Navigator.pop(context, emoji))),
+                          ])),
+                        ],
+                      ]))))),
+    );
+    if (selected == null) return;
+    _recentEmojis.remove(selected);
+    _recentEmojis.insert(0, selected);
+    if (_recentEmojis.length > 24) _recentEmojis.removeLast();
+    final value = _composerController.value;
+    final start =
+        value.selection.start < 0 ? value.text.length : value.selection.start;
+    final end = value.selection.end < 0 ? start : value.selection.end;
+    final text = value.text.replaceRange(start, end, selected);
+    _composerController.value = value.copyWith(
+        text: text,
+        selection: TextSelection.collapsed(offset: start + selected.length));
+  }
+
+  Widget _emojiGrid(List<String> emojis, ValueChanged<String> onSelected) =>
+      GridView.count(
+          crossAxisCount: 8,
+          children: emojis
+              .map((emoji) => InkWell(
+                    onTap: () => onSelected(emoji),
+                    child: Center(
+                        child:
+                            Text(emoji, style: const TextStyle(fontSize: 26))),
+                  ))
+              .toList());
+
   @override
   Widget build(BuildContext context) {
-    final allMessages = widget.repository.departmentChatMessages.value
-        .where((m) => !m.isHiddenFor(widget.staff.id))
+    final historyMessages = widget.repository.departmentChatMessages.value
+        .where((message) =>
+            message.conversationType == 'DEPARTMENT' &&
+            canonicalDepartmentKey(message.departmentKey) == _departmentKey &&
+            !message.deletedByIds.contains(widget.staff.id))
         .toList();
     final query = _searchController.text.trim().toLowerCase();
-    final visibleMessages = query.isEmpty
-        ? allMessages
-        : allMessages
-            .where((message) =>
-                message.senderName.toLowerCase().contains(query) ||
-                message.text.toLowerCase().contains(query))
-            .toList();
+    final searching = query.isNotEmpty;
+    final allMessages = searching ? _searchResults : historyMessages;
+    final visibleMessages = allMessages;
 
     return Column(children: [
       if (widget.searchOpen)
@@ -4057,7 +4975,7 @@ class _ChatPageState extends State<_ChatPage> {
                 key: const ValueKey('chat-search'),
                 controller: _searchController,
                 autofocus: true,
-                onChanged: (_) => setState(() {}),
+                onChanged: _onSearchChanged,
                 decoration: InputDecoration(
                     prefixIcon: Icon(Icons.search, size: 18, color: _muted),
                     suffixIcon: _searchController.text.isEmpty
@@ -4069,7 +4987,7 @@ class _ChatPageState extends State<_ChatPage> {
                               setState(() {});
                             },
                             icon: Icon(Icons.close, size: 17, color: _muted)),
-                    hintText: 'Search staff or messages',
+                    hintText: 'Search messages',
                     hintStyle: TextStyle(fontSize: 12, color: _muted),
                     isDense: true,
                     filled: true,
@@ -4080,9 +4998,10 @@ class _ChatPageState extends State<_ChatPage> {
                         borderSide: BorderSide.none,
                         borderRadius: BorderRadius.circular(12))))),
       Expanded(
-        child: _isLoading && allMessages.isEmpty
+        child: (searching ? _searchLoading : _isLoading) && allMessages.isEmpty
             ? const Center(child: CircularProgressIndicator())
-            : _errorMessage != null && allMessages.isEmpty
+            : (searching ? _searchError : _errorMessage) != null &&
+                    allMessages.isEmpty
                 ? Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -4092,13 +5011,15 @@ class _ChatPageState extends State<_ChatPage> {
                           Icon(Icons.error_outline, size: 36, color: _muted),
                           const SizedBox(height: 12),
                           Text(
-                            _errorMessage!,
+                            searching ? _searchError! : _errorMessage!,
                             textAlign: TextAlign.center,
                             style: TextStyle(fontSize: 12, color: _muted),
                           ),
                           const SizedBox(height: 12),
                           ElevatedButton.icon(
-                            onPressed: () => _loadMessages(),
+                            onPressed: () => searching
+                                ? _runMessageSearch(query, reset: true)
+                                : _loadMessages(),
                             icon: const Icon(Icons.refresh, size: 16),
                             label: const Text('Retry'),
                             style: ElevatedButton.styleFrom(
@@ -4115,36 +5036,68 @@ class _ChatPageState extends State<_ChatPage> {
                     controller: _messagesScrollController,
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                     children: [
-                      if (visibleMessages.isNotEmpty)
-                        Center(
-                          child: _pill(
-                            _formatDateHeader(visibleMessages.first.timestamp),
-                            const Color(0xffeef2f8),
-                            _muted,
-                          ),
-                        ),
                       if (visibleMessages.isEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 32),
                           child: Center(
                             child: Text(
-                              query.isNotEmpty
+                              searching
                                   ? 'No messages found'
-                                  : 'No messages yet in this department',
+                                  : 'No messages yet in $_departmentTitle',
                               style: TextStyle(fontSize: 12, color: _muted),
                             ),
                           ),
                         ),
-                      ...visibleMessages.map((message) =>
-                          message.isSentBy(widget.staff)
-                              ? _sentMessage(message)
-                              : _message(
-                                  message.initials,
-                                  message.senderName,
-                                  message.text,
-                                  message.formattedTime,
-                                  isHR: message.isHR,
-                                )),
+                      ...visibleMessages.asMap().entries.expand((entry) {
+                        final index = entry.key;
+                        final message = entry.value;
+                        final isNewDay = index == 0 ||
+                            visibleMessages[index - 1].timestamp.year !=
+                                message.timestamp.year ||
+                            visibleMessages[index - 1].timestamp.month !=
+                                message.timestamp.month ||
+                            visibleMessages[index - 1].timestamp.day !=
+                                message.timestamp.day;
+                        return <Widget>[
+                          if (isNewDay)
+                            Center(
+                                child: Padding(
+                                    padding: const EdgeInsets.only(top: 12),
+                                    child: _pill(
+                                        _formatDateHeader(message.timestamp),
+                                        const Color(0xffeef2f8),
+                                        _muted))),
+                          GestureDetector(
+                            onLongPress: () => _showMessageActions(message),
+                            child: message.deletedForEveryone
+                                ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: Text('This message was deleted',
+                                        style: TextStyle(
+                                            color: Colors.grey,
+                                            fontStyle: FontStyle.italic)))
+                                : message.isSentBy(widget.staff)
+                                    ? _sentMessage(message)
+                                    : _message(
+                                        message.initials,
+                                        message.senderName,
+                                        message.text,
+                                        message.formattedTime,
+                                        isHR: message.isHR,
+                                      ),
+                          ),
+                        ];
+                      }),
+                      if (searching && _searchLoading)
+                        const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Center(
+                              child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2))),
+                        ),
                     ],
                   ),
       ),
@@ -4168,14 +5121,19 @@ class _ChatPageState extends State<_ChatPage> {
               },
             ),
             const SizedBox(width: 8),
+            IconButton(
+                tooltip: 'Choose emoji',
+                onPressed: _showEmojiPicker,
+                icon: const Text('😀', style: TextStyle(fontSize: 20))),
             Expanded(
                 child: TextField(
                     key: const ValueKey('chat-message-composer'),
                     controller: _composerController,
+                    enabled: _hasDepartment,
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _sendMessage(),
                     decoration: InputDecoration(
-                        hintText: 'Message everyone...',
+                        hintText: 'Message your department...',
                         hintStyle: TextStyle(fontSize: 12, color: _muted),
                         isDense: true,
                         filled: true,
@@ -4192,7 +5150,8 @@ class _ChatPageState extends State<_ChatPage> {
                 child: IconButton(
                     key: const ValueKey('chat-message-send'),
                     tooltip: 'Send message',
-                    onPressed: _isSending ? null : _sendMessage,
+                    onPressed:
+                        _isSending || !_hasDepartment ? null : _sendMessage,
                     padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
                     style: IconButton.styleFrom(
@@ -4943,7 +5902,13 @@ class _ScrollPage extends StatelessWidget {
   final List<Widget> children;
   @override
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
-        final width = box.maxWidth > 520 ? 500.0 : box.maxWidth;
+        final width = box.maxWidth > 1200
+            ? 1120.0
+            : box.maxWidth > 900
+                ? 860.0
+                : box.maxWidth > 520
+                    ? 500.0
+                    : box.maxWidth;
         return SingleChildScrollView(
             child: Center(
                 child: SizedBox(

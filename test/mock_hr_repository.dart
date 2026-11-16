@@ -28,6 +28,8 @@ class MockHRRepository implements HRRepository {
       senderId: 'staff_anshi',
       senderName: 'Anshi M.',
       senderRole: 'STAFF',
+      departmentKey: 'tech',
+      conversationType: 'DEPARTMENT',
       text:
           'Good morning team 👋 Hope everyone has a smooth and productive Wednesday.',
       timestamp: DateTime(2026, 9, 24, 9, 12),
@@ -38,6 +40,8 @@ class MockHRRepository implements HRRepository {
       senderId: 'staff_rahul',
       senderName: 'Rahul K.',
       senderRole: 'STAFF',
+      departmentKey: 'tech',
+      conversationType: 'DEPARTMENT',
       text: 'Good morning! 🚀 Starting the client installation at Apex Tower.',
       timestamp: DateTime(2026, 9, 24, 9, 18),
       isRead: true,
@@ -47,6 +51,8 @@ class MockHRRepository implements HRRepository {
       senderId: 'staff_priya',
       senderName: 'Priya S.',
       senderRole: 'STAFF',
+      departmentKey: 'tech',
+      conversationType: 'DEPARTMENT',
       text:
           'Wishing you all a great Wednesday. Don’t forget to sync your updates before EOD.',
       timestamp: DateTime(2026, 9, 24, 9, 26),
@@ -57,6 +63,8 @@ class MockHRRepository implements HRRepository {
       senderId: 'staff_anshi',
       senderName: 'Anshi M.',
       senderRole: 'STAFF',
+      departmentKey: 'tech',
+      conversationType: 'DEPARTMENT',
       text:
           'Friendly reminder: Please submit your daily work updates before 6 PM today. ✅',
       timestamp: DateTime(2026, 9, 24, 10, 2),
@@ -67,6 +75,8 @@ class MockHRRepository implements HRRepository {
       senderId: 'hr_admin',
       senderName: 'HR Team',
       senderRole: 'HR',
+      departmentKey: 'tech',
+      conversationType: 'DEPARTMENT',
       text:
           'Office will start at 9:30 AM tomorrow for scheduled infrastructure maintenance.',
       timestamp: DateTime(2026, 9, 24, 11, 15),
@@ -294,6 +304,9 @@ class MockHRRepository implements HRRepository {
   }
 
   @override
+  Future<List<BirthdayEmployee>> fetchTodaysBirthdays() async => const [];
+
+  @override
   Future<DailyUpdate> submitDailyUpdate(String title, String text) async {
     if (title.trim().isEmpty)
       throw Exception('Please enter a title for the update.');
@@ -321,6 +334,25 @@ class MockHRRepository implements HRRepository {
   }
 
   @override
+  Future<StaffChatSearchPage> searchDepartmentMessages({
+    required String departmentKey,
+    required String query,
+    int page = 1,
+    int limit = 30,
+  }) async =>
+      StaffChatSearchPage(
+          messages: departmentChatMessages.value
+              .where((message) =>
+                  message.text.toLowerCase().contains(query.toLowerCase()))
+              .toList(),
+          hasMore: false);
+
+  @override
+  Future<void> clearDepartmentMessages({required String departmentKey}) async {
+    departmentChatMessages.value = [];
+  }
+
+  @override
   Future<StaffChatMessage> sendDepartmentMessage(
     String text, {
     String? departmentKey,
@@ -333,7 +365,8 @@ class MockHRRepository implements HRRepository {
       senderName:
           sender?.name.isNotEmpty == true ? sender!.name : 'Staff Member',
       senderRole: 'STAFF',
-      departmentKey: departmentKey ?? 'tech',
+      departmentKey: departmentKey ?? sender?.department ?? '',
+      conversationType: 'DEPARTMENT',
       clientMessageId: clientMessageId,
       text: text,
       timestamp: DateTime.now(),
@@ -344,13 +377,15 @@ class MockHRRepository implements HRRepository {
   }
 
   @override
-  Future<void> deleteDepartmentMessageForMe(String messageId) async {
+  Future<void> deleteDepartmentMessageForMe(String messageId,
+      {required String departmentKey}) async {
     departmentChatMessages.value =
         departmentChatMessages.value.where((m) => m.id != messageId).toList();
   }
 
   @override
-  Future<void> deleteDepartmentMessageForEveryone(String messageId) async {
+  Future<void> deleteDepartmentMessageForEveryone(String messageId,
+      {required String departmentKey}) async {
     departmentChatMessages.value =
         departmentChatMessages.value.where((m) => m.id != messageId).toList();
   }
