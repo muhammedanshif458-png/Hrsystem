@@ -407,6 +407,8 @@ class HRRepositoryImpl implements HRRepository {
 
       final staff = Staff(
         id: staffId,
+        authUserId: userMap['_id']?.toString(),
+        chatSenderId: empMap?['_id']?.toString(),
         name: staffName,
         email: userMap['email']?.toString() ?? trimmedEmail,
         phoneNumber:

@@ -538,7 +538,13 @@ class _StaffHubShellState extends State<StaffHubShell> {
                   decoration: BoxDecoration(
                       color: const Color(0xffe9f0ff),
                       borderRadius: BorderRadius.circular(16)),
-                  child: Text(widget.department.toUpperCase(),
+                  child: Text(
+                      isChatPage
+                          ? (widget.staff.department.trim().isEmpty
+                              ? 'Department unavailable'
+                              : canonicalDepartmentKey(widget.staff.department)
+                                  .toUpperCase())
+                          : widget.department.toUpperCase(),
                       style: TextStyle(
                           fontSize: 10,
                           color: _blue,
@@ -561,7 +567,9 @@ class _StaffHubShellState extends State<StaffHubShell> {
                     },
                     itemBuilder: (context) => const [
                       PopupMenuItem(
-                          value: 'search', child: Text('Search messages')),
+                          key: ValueKey('chat-option-search'),
+                          value: 'search',
+                          child: Text('Search messages')),
                       PopupMenuItem(value: 'clear', child: Text('Clear chat')),
                     ],
                   ),
@@ -4547,9 +4555,10 @@ class _ChatPageState extends State<_ChatPage> {
         page: page,
       );
       if (!mounted || query != _searchController.text.trim()) return;
-      final currentUserId = widget.staff.id;
+      final currentUserId = widget.staff.authUserId;
       final scoped = response.messages.where((message) =>
-          !message.deletedByIds.contains(currentUserId) &&
+          (currentUserId == null ||
+              !message.deletedByIds.contains(currentUserId)) &&
           message.conversationType == 'DEPARTMENT' &&
           canonicalDepartmentKey(message.departmentKey) == _departmentKey);
       setState(() {
@@ -4792,10 +4801,13 @@ class _ChatPageState extends State<_ChatPage> {
       }
       if (mounted) setState(() {});
     } catch (error) {
-      if (mounted)
+      if (mounted) {
+        final message = error is ApiException && error.isForbidden
+            ? 'You can delete for everyone only your own messages.'
+            : 'Could not delete message: ${error.toString().replaceFirst('Exception: ', '')}';
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-                'Could not delete message: ${error.toString().replaceFirst('Exception: ', '')}')));
+            content: Text(message)));
+      }
     }
   }
 
@@ -4959,7 +4971,8 @@ class _ChatPageState extends State<_ChatPage> {
         .where((message) =>
             message.conversationType == 'DEPARTMENT' &&
             canonicalDepartmentKey(message.departmentKey) == _departmentKey &&
-            !message.deletedByIds.contains(widget.staff.id))
+            (widget.staff.authUserId == null ||
+                !message.deletedByIds.contains(widget.staff.authUserId)))
         .toList();
     final query = _searchController.text.trim().toLowerCase();
     final searching = query.isNotEmpty;
@@ -5008,6 +5021,18 @@ class _ChatPageState extends State<_ChatPage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
+                          if (!_hasDepartment) ...[
+                            Text(
+                              'Department unavailable',
+                              key: const ValueKey(
+                                  'department-unavailable-heading'),
+                              style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: _ink),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
                           Icon(Icons.error_outline, size: 36, color: _muted),
                           const SizedBox(height: 12),
                           Text(
@@ -5070,9 +5095,12 @@ class _ChatPageState extends State<_ChatPage> {
                           GestureDetector(
                             onLongPress: () => _showMessageActions(message),
                             child: message.deletedForEveryone
-                                ? const Padding(
-                                    padding: EdgeInsets.all(12),
-                                    child: Text('This message was deleted',
+                                ? Padding(
+                                    key: ValueKey(
+                                        'deleted-message-${message.id}'),
+                                    padding: const EdgeInsets.all(12),
+                                    child: const Text(
+                                        'This message was deleted',
                                         style: TextStyle(
                                             color: Colors.grey,
                                             fontStyle: FontStyle.italic)))

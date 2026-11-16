@@ -222,14 +222,16 @@ void main() {
 
     test('isSentBy matches authenticated employee profile accurately', () {
       final currentStaff = Staff(
-        id: 'staff_99',
+        id: 'EMP-99',
+        authUserId: 'user_object_id_99',
+        chatSenderId: 'employee_object_id_99',
         name: 'Kavita Roy',
         department: 'Telecalling & Client Relations',
       );
 
       final myMsg = StaffChatMessage(
         id: 'm1',
-        senderId: 'staff_99',
+        senderId: 'employee_object_id_99',
         senderName: 'Kavita Roy',
         senderRole: 'STAFF',
         text: 'Followed up with 15 leads',
@@ -247,6 +249,27 @@ void main() {
       );
       expect(otherMsg.isSentBy(currentStaff), isFalse);
 
+      final sameNameDifferentSender = StaffChatMessage(
+        id: 'm2_same_name',
+        senderId: 'staff_42',
+        senderName: 'Kavita Roy',
+        senderRole: 'STAFF',
+        text: 'Another employee with the same display name',
+        timestamp: DateTime.now(),
+      );
+      expect(sameNameDifferentSender.isSentBy(currentStaff), isFalse);
+
+      final relatedRefOnly = StaffChatMessage(
+        id: 'm2_related_ref',
+        senderId: 'different_user_id',
+        senderEmployee: 'staff_99',
+        senderName: 'Kavita Roy',
+        senderRole: 'STAFF',
+        text: 'Sender identity must use senderId',
+        timestamp: DateTime.now(),
+      );
+      expect(relatedRefOnly.isSentBy(currentStaff), isFalse);
+
       final hrMsg = StaffChatMessage(
         id: 'm3',
         senderId: 'hr_admin',
@@ -256,6 +279,46 @@ void main() {
         timestamp: DateTime.now(),
       );
       expect(hrMsg.isSentBy(currentStaff), isFalse);
+    });
+
+    test('login keeps User and Employee identities separate for chat', () async {
+      final api = FakeChatApiService()
+        ..setResponse(ApiConfig.login, {
+          'success': true,
+          'data': {
+            'accessToken': 'token',
+            'user': {
+              '_id': 'user_object_id_99',
+              'role': 'STAFF',
+              'isActive': true,
+              'email': 'staff@example.com',
+              'employee': {
+                '_id': 'employee_object_id_99',
+                'employeeId': 'EMP-99',
+                'firstName': 'Kavita',
+                'lastName': 'Roy',
+                'department': 'Tech',
+              },
+            },
+          },
+        });
+      final repository = HRRepositoryImpl(api: api);
+
+      final staff = await repository.signIn('staff@example.com', 'password');
+
+      expect(staff.id, 'EMP-99');
+      expect(staff.authUserId, 'user_object_id_99');
+      expect(staff.chatSenderId, 'employee_object_id_99');
+      expect(
+        StaffChatMessage(
+          id: 'own',
+          senderId: 'employee_object_id_99',
+          text: 'own message',
+          timestamp: DateTime(2026),
+        ).isSentBy(staff),
+        isTrue,
+      );
+      repository.dispose();
     });
 
     test('isHiddenFor respects deletedForEveryone and deletedByIds', () {
@@ -791,7 +854,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Chat options'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Search messages'));
+      await tester.tap(find.byKey(const ValueKey('chat-option-search')));
       await tester.pumpAndSettle();
       await tester.enterText(
           find.byKey(const ValueKey('chat-search')), 'needle');
@@ -835,7 +898,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Chat options'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Search messages'));
+      await tester.tap(find.byKey(const ValueKey('chat-option-search')));
       await tester.pumpAndSettle();
       expect(find.text('needle target original'), findsNothing);
       expect(find.text('This message was deleted'), findsOneWidget);
@@ -937,7 +1000,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Chat options'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Search messages'));
+      await tester.tap(find.byKey(const ValueKey('chat-option-search')));
       await tester.pumpAndSettle();
       await tester.enterText(
           find.byKey(const ValueKey('chat-search')), 'needle');
@@ -972,10 +1035,14 @@ void main() {
 
       await tester.tap(find.byTooltip('Chat options'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Search messages'));
+      await tester.tap(find.byKey(const ValueKey('chat-option-search')));
       await tester.pumpAndSettle();
       expect(find.text('needle target original'), findsNothing);
-      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('deleted-message-search_target')),
+        findsOneWidget,
+      );
+      expect(find.text('This message was deleted'), findsWidgets);
       expect(
         repository.departmentChatMessages.value
             .singleWhere((message) => message.id == 'search_target')
@@ -994,6 +1061,7 @@ void main() {
 
       final testStaff = Staff(
         id: 'emp_tele_01',
+        chatSenderId: 'emp_tele_01',
         name: 'Sunita Sharma',
         email: 'sunita@company.com',
         department: Department.telecalling,
@@ -1144,7 +1212,7 @@ void main() {
 
       final ownDeleted = StaffChatMessage(
         id: 'own_deleted_message',
-        senderId: testStaff.id,
+        senderId: testStaff.chatSenderId!,
         senderName: testStaff.name,
         senderRole: 'STAFF',
         departmentKey: 'telecalling',
@@ -1155,7 +1223,10 @@ void main() {
       );
       socketService.emitTestIncomingMessage(ownDeleted);
       await tester.pumpAndSettle();
-      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('deleted-message-own_deleted_message')),
+        findsOneWidget,
+      );
 
       // Verify composer prevents empty send
       final composer = find.byKey(const ValueKey('chat-message-composer'));
@@ -1244,7 +1315,7 @@ void main() {
       expect(find.text('Search messages'), findsOneWidget);
       expect(find.text('Clear chat'), findsOneWidget);
       expect(find.text('Company Chat'), findsNothing);
-      await tester.tap(find.text('Search messages'));
+      await tester.tap(find.byKey(const ValueKey('chat-option-search')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chat-search')), findsOneWidget);
       await tester.enterText(
@@ -1305,10 +1376,20 @@ void main() {
       await tester.tap(find.byTooltip('Open chat'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Department unavailable'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('department-unavailable-heading')),
+        findsOneWidget,
+      );
       expect(find.text('Your profile has no assigned department.'),
           findsOneWidget);
-      expect(fakeApi.getRequests, isEmpty);
+      expect(
+        fakeApi.getRequests.any((request) {
+          final endpoint = request['endpoint'] as String;
+          return endpoint.startsWith('/staff/departments/') ||
+              endpoint == ApiConfig.staffChatMessages;
+        }),
+        isFalse,
+      );
       expect(StaffChatSocketService().currentDepartmentKey, isNull);
       expect(
           tester

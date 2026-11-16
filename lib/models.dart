@@ -4,6 +4,8 @@
 class Staff {
   const Staff({
     this.id = '',
+    this.authUserId,
+    this.chatSenderId,
     this.name = '',
     this.email = '',
     this.phoneNumber = '',
@@ -19,6 +21,10 @@ class Staff {
   });
 
   final String id;
+  /// Mongo User id from the authenticated login response.
+  final String? authUserId;
+  /// Mongo Employee id used by DepartmentChatMessage.senderId.
+  final String? chatSenderId;
   final String name;
   final String email;
   final String phoneNumber;
@@ -34,6 +40,8 @@ class Staff {
 
   Staff copyWith({
     String? id,
+    String? authUserId,
+    String? chatSenderId,
     String? name,
     String? email,
     String? phoneNumber,
@@ -49,6 +57,8 @@ class Staff {
   }) {
     return Staff(
       id: id ?? this.id,
+      authUserId: authUserId ?? this.authUserId,
+      chatSenderId: chatSenderId ?? this.chatSenderId,
       name: name ?? this.name,
       email: email ?? this.email,
       phoneNumber: phoneNumber ?? this.phoneNumber,
@@ -1111,16 +1121,13 @@ class StaffChatMessage {
 
   /// Whether this message was authored by the current logged-in [user]
   bool isSentBy(Staff? user) {
-    if (user == null) return false;
-    if (senderId.isNotEmpty && senderId == user.id) return true;
-    if (senderEmployee != null && senderEmployee == user.id) return true;
-    if (senderUser != null && senderUser == user.id) return true;
-    if (!isHR &&
-        user.name.isNotEmpty &&
-        senderName.trim().toLowerCase() == user.name.trim().toLowerCase()) {
-      return true;
-    }
-    return false;
+    // senderId is the original author identity used by the backend. Never
+    // infer ownership from a display name, role, or related employee/user ref.
+    return user != null &&
+        user.chatSenderId != null &&
+        user.chatSenderId!.isNotEmpty &&
+        senderId.isNotEmpty &&
+        senderId == user.chatSenderId;
   }
 
   /// Checks if message is deleted for everyone or specifically for [userId]
