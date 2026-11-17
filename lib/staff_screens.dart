@@ -187,6 +187,27 @@ class _StaffHubShellState extends State<StaffHubShell> {
   }
 
   int? _settingsSubPage;
+  final List<int> _settingsHistory = [];
+
+  void _openSettingsSubPage(int page) {
+    setState(() {
+      if (_settingsSubPage != null && _settingsSubPage != page) {
+        _settingsHistory.add(_settingsSubPage!);
+      }
+      _settingsSubPage = page;
+    });
+  }
+
+  void _popSettingsSubPage() {
+    setState(() {
+      if (_settingsHistory.isNotEmpty) {
+        _settingsSubPage = _settingsHistory.removeLast();
+      } else {
+        _settingsSubPage = null;
+      }
+    });
+  }
+
   bool _chatSearchOpen = false;
   bool _chatNotifications = true;
   bool _leaveStatusNotifications = true;
@@ -293,6 +314,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
 
   void _openChat() {
     setState(() {
+      _settingsHistory.clear();
       _settingsSubPage = 2;
       _chatSearchOpen = false;
     });
@@ -350,7 +372,10 @@ class _StaffHubShellState extends State<StaffHubShell> {
           repository: widget.repository,
           department: widget.department,
           workMode: widget.workMode,
-          workLocation: widget.workLocation),
+          workLocation: widget.workLocation,
+          onOpenPrivacyPolicy: () => _openSettingsSubPage(7),
+          onOpenTerms: () => _openSettingsSubPage(8),
+          onOpenSupport: () => _openSettingsSubPage(5)),
       1 => const _SettingsDetailPage(
           icon: Icons.lock_outline,
           title: 'Security',
@@ -370,13 +395,10 @@ class _StaffHubShellState extends State<StaffHubShell> {
           onPunchChanged: (value) => setState(() => _punchReminders = value)),
       4 => _AppearancePage(
           themeMode: widget.themeMode, onChanged: widget.onThemeModeChanged),
-      5 => const _SettingsDetailPage(
-          icon: Icons.help_outline,
-          title: 'Help & Support',
-          description: 'Get help with StaffHub'),
+      5 => StaffSupportHelpdeskPage(onBack: _popSettingsSubPage),
       6 => _AboutPage(
-          onOpenTerms: () => setState(() => _settingsSubPage = 8),
-          onOpenPrivacyPolicy: () => setState(() => _settingsSubPage = 7),
+          onOpenTerms: () => _openSettingsSubPage(8),
+          onOpenPrivacyPolicy: () => _openSettingsSubPage(7),
           onOpenLicenses: () => showLicensePage(
             context: context,
             applicationName: 'LY Staff Management',
@@ -384,34 +406,18 @@ class _StaffHubShellState extends State<StaffHubShell> {
             applicationLegalese: '© 2026 LY Softwares. All rights reserved.',
           ),
         ),
-      7 => const _SettingsDocumentPage(
-          title: 'Privacy Policy', content: '''Your privacy is important to us.
-
-    This application collects user information such as name, email, phone number and address for account management and application functionality.
-
-    Your information will be handled securely and will not be shared unnecessarily with third parties.
-
-    By using this application, you agree to the collection and use of information as described in this Privacy Policy.'''),
-      8 => const _SettingsDocumentPage(
-          title: 'Terms & Conditions',
-          content:
-              '''By using this application, you agree to follow the rules and conditions of the application.
-
-    Users are responsible for keeping their account information secure.
-
-    The application should only be used for its intended purpose.
-
-    We reserve the right to update these terms when necessary.'''),
+      7 => StaffPrivacyPolicyPage(onBack: _popSettingsSubPage),
+      8 => StaffTermsConditionsPage(onBack: _popSettingsSubPage),
       _ => _SettingsPage(
-          onOpenProfile: () => setState(() => _settingsSubPage = 0),
-          onOpenSecurity: () => setState(() => _settingsSubPage = 1),
-          onOpenChat: () => setState(() => _settingsSubPage = 2),
-          onOpenNotifications: () => setState(() => _settingsSubPage = 3),
-          onOpenAppearance: () => setState(() => _settingsSubPage = 4),
-          onOpenSupport: () => setState(() => _settingsSubPage = 5),
-          onOpenAbout: () => setState(() => _settingsSubPage = 6),
-          onOpenPrivacyPolicy: () => setState(() => _settingsSubPage = 7),
-          onOpenTerms: () => setState(() => _settingsSubPage = 8),
+          onOpenProfile: () => _openSettingsSubPage(0),
+          onOpenSecurity: () => _openSettingsSubPage(1),
+          onOpenChat: () => _openSettingsSubPage(2),
+          onOpenNotifications: () => _openSettingsSubPage(3),
+          onOpenAppearance: () => _openSettingsSubPage(4),
+          onOpenSupport: () => _openSettingsSubPage(5),
+          onOpenAbout: () => _openSettingsSubPage(6),
+          onOpenPrivacyPolicy: () => _openSettingsSubPage(7),
+          onOpenTerms: () => _openSettingsSubPage(8),
           onLogout: widget.onLogout),
     };
     final pages = [
@@ -469,9 +475,9 @@ class _StaffHubShellState extends State<StaffHubShell> {
             2 => 'Chat',
             3 => 'Notifications',
             4 => 'Appearance',
-            5 => 'Help & Support',
+            5 => 'Support & Helpdesk',
             6 => 'About',
-            7 => 'Privacy Policy',
+            7 => 'Privacy & Policy',
             8 => 'Terms & Conditions',
             _ => 'Settings',
           }
@@ -497,7 +503,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                   ? IconButton(
                       icon:
                           Icon(Icons.arrow_back, color: colorScheme.onSurface),
-                      onPressed: () => setState(() => _settingsSubPage = null),
+                      onPressed: _popSettingsSubPage,
                     )
                   : null,
               title: isChatPage
@@ -669,9 +675,12 @@ class _StaffHubShellState extends State<StaffHubShell> {
                                                     ? colorScheme.primary
                                                     : _ink)),
                                         onTap: () {
-                                          if (_settingsSubPage != null)
-                                            setState(
-                                                () => _settingsSubPage = null);
+                                          if (_settingsSubPage != null) {
+                                            setState(() {
+                                              _settingsSubPage = null;
+                                              _settingsHistory.clear();
+                                            });
+                                          }
                                           widget.onNavigate(i);
                                         }))),
                           const Spacer(),
@@ -743,7 +752,10 @@ class _StaffHubShellState extends State<StaffHubShell> {
                     selectedIndex: widget.pageIndex,
                     onDestinationSelected: (index) {
                       if (_settingsSubPage != null) {
-                        setState(() => _settingsSubPage = null);
+                        setState(() {
+                          _settingsSubPage = null;
+                          _settingsHistory.clear();
+                        });
                       }
                       if (index == 0 || index == 2) {
                         unawaited(widget.repository.fetchStaffLeaves());
@@ -5298,7 +5310,7 @@ class _SettingsPage extends StatelessWidget {
         ]),
         _group('Support', [
           _SettingRow(
-              Icons.help_outline, 'Help & Support', 'Get help with StaffHub',
+              Icons.help_outline, 'Support & Helpdesk', 'Get help with StaffHub',
               onTap: onOpenSupport),
           _SettingRow(
               Icons.info_outline, 'About', 'App information and version',
@@ -5525,26 +5537,746 @@ class _AboutPage extends StatelessWidget {
       ]);
 }
 
-class _SettingsDocumentPage extends StatelessWidget {
-  const _SettingsDocumentPage({required this.title, required this.content});
+Widget _bullet(String label, String text) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('• ',
+              style: TextStyle(
+                  color: _blue, fontWeight: FontWeight.w700, fontSize: 13)),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: TextStyle(fontSize: 12.5, height: 1.45, color: _ink),
+                children: [
+                  TextSpan(
+                      text: '$label: ',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  TextSpan(text: text),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
 
-  final String title;
-  final String content;
+class StaffPrivacyPolicyPage extends StatelessWidget {
+  const StaffPrivacyPolicyPage({
+    super.key,
+    this.isStandalone = false,
+    this.onBack,
+  });
+
+  final bool isStandalone;
+  final VoidCallback? onBack;
+
+  Widget _sectionCard({
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
+    return _ProfileCard(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: _isDark
+                        ? const Color(0xff1d2b40)
+                        : const Color(0xffeaf0ff),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: _blue, size: 17),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: _ink,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return _ScrollPage(children: [
-      const SizedBox(height: 18),
-      Text(title,
-          style: TextStyle(
-              fontSize: 20, fontWeight: FontWeight.w700, color: _ink)),
-      const SizedBox(height: 12),
+    final content = _ScrollPage(children: [
+      const SizedBox(height: 14),
       _ProfileCard(
-          child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Text(content,
-                  style: TextStyle(fontSize: 13, height: 1.6, color: _ink)))),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _isDark
+                      ? const Color(0xff1d2b40)
+                      : const Color(0xffeaf0ff),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.privacy_tip_outlined,
+                    color: _blue, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Privacy & Policy',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Last updated: January 2026 • Version 2.0',
+                      style: TextStyle(fontSize: 11.5, color: _muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Introduction',
+        icon: Icons.info_outline,
+        child: Text(
+          'Welcome to StaffHub. We value your privacy and are committed to safeguarding personal and professional data collected during your employment and use of the StaffHub application. This policy details how employee information is gathered, managed, utilized, and safeguarded within the organization.\n\nBy accessing and utilizing StaffHub, you acknowledge that your information will be processed in accordance with this Privacy Policy and applicable workplace data protection regulations.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Information We Collect',
+        icon: Icons.folder_shared_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'StaffHub collects and processes information required for workplace operations, attendance records, and human resource administration:',
+              style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+            ),
+            const SizedBox(height: 8),
+            _bullet('Personal Identification',
+                'Full name, employee ID, telephone number, official work email, and address.'),
+            _bullet('Employment Details',
+                'Department, job role, reporting manager, work mode (Office or Work From Home), and shift timings.'),
+            _bullet('Attendance & Activity',
+                'Check-in and check-out timestamps, break durations, attendance statuses, and daily updates.'),
+            _bullet('Leaves & Requests',
+                'Leave types, duration, reason for absence, and uploaded supporting documentation.'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'How We Use Employee Information',
+        icon: Icons.business_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Employee data is utilized strictly for lawful administrative and operational purposes:',
+              style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+            ),
+            const SizedBox(height: 8),
+            _bullet('Attendance Tracking',
+                'Recording daily attendance, shift completion, and break intervals accurately.'),
+            _bullet('Leave Management',
+                'Reviewing, approving, and maintaining balance records for employee leaves.'),
+            _bullet('Internal Support',
+                'Assisting employees with helpdesk inquiries, notifications, and profile support.'),
+            _bullet('Operations & Compliance',
+                'Generating departmental summaries and ensuring compliance with labor laws.'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Data Protection',
+        icon: Icons.security_outlined,
+        child: Text(
+          'We implement rigorous administrative, technical, and physical security measures to safeguard employee data:\n\n• Secure Transmission: All data exchanged between the StaffHub application and servers is encrypted using industry-standard TLS protocols.\n• Access Control: Strict role-based permissions ensure only authorized supervisors and HR personnel have access to employee records.\n• Infrastructure Safety: Stored data is maintained in secure enterprise cloud environments subject to ongoing security audits and automated backups.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Information Sharing',
+        icon: Icons.share_outlined,
+        child: Text(
+          'Employee privacy is strictly protected. We do not sell, rent, or monetize employee data. Information is shared only with:\n\n• Authorized internal management and HR personnel on a strict need-to-know basis.\n• Enterprise service providers (such as hosting, email delivery, and cloud infrastructure) bound by confidentiality covenants.\n• Regulatory, law enforcement, or statutory authorities when strictly mandated by applicable laws or legal proceedings.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Employee Privacy Rights',
+        icon: Icons.verified_user_outlined,
+        child: Text(
+          'As an employee, you possess defined rights regarding your personal records:\n\n• Right to Review: View personal profile information and attendance records at any time within StaffHub.\n• Right to Correction: Request corrections to outdated or inaccurate personal details through your HR department.\n• Right to Transparency: Inquire about how your data is processed, stored, and retained.\n• Right to Report: Raise concerns or reports regarding data privacy directly with the data protection officer.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Contact Information',
+        icon: Icons.contact_support_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'If you have inquiries, questions, or feedback regarding this Privacy Policy, please contact our HR and Privacy team:',
+              style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+            ),
+            const SizedBox(height: 8),
+            _bullet('HR Department', 'hr@lysoftware.com'),
+            _bullet('Data Privacy Officer', 'privacy@staffhub.com'),
+            _bullet('Helpdesk Phone',
+                '+91 80 4567 8900 (Mon – Fri, 9:00 AM – 6:00 PM)'),
+            _bullet('Office',
+                'StaffHub Systems Inc. • Human Resources Compliance Desk'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 24),
     ]);
+
+    if (isStandalone) {
+      return Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          title: Text(
+            'Privacy & Policy',
+            style: TextStyle(
+                fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
+          ),
+          leading: IconButton(
+            icon: Icon(Icons.arrow_back, color: _ink),
+            onPressed: onBack ?? () => Navigator.of(context).pop(),
+          ),
+          backgroundColor: _surface,
+          elevation: 0,
+        ),
+        body: content,
+      );
+    }
+    return content;
+  }
+}
+
+class StaffTermsConditionsPage extends StatelessWidget {
+  const StaffTermsConditionsPage({
+    super.key,
+    this.isStandalone = false,
+    this.onBack,
+  });
+
+  final bool isStandalone;
+  final VoidCallback? onBack;
+
+  Widget _sectionCard({
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
+    return _ProfileCard(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: _isDark
+                        ? const Color(0xff1d2b40)
+                        : const Color(0xffeaf0ff),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: _blue, size: 17),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: _ink,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final content = _ScrollPage(children: [
+      const SizedBox(height: 14),
+      _ProfileCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _isDark
+                      ? const Color(0xff1d2b40)
+                      : const Color(0xffeaf0ff),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.description_outlined,
+                    color: _blue, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Terms & Conditions',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'StaffHub Workplace Agreement • Version 2.0',
+                      style: TextStyle(fontSize: 11.5, color: _muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Introduction',
+        icon: Icons.article_outlined,
+        child: Text(
+          'These Terms & Conditions govern your access to and use of the StaffHub workplace application. By accessing or using the StaffHub portal, you acknowledge that you have read, understood, and agree to abide by these terms, company workplace guidelines, and all applicable employment policies.\n\nThese terms serve to maintain operational transparency, accountability, and a secure collaborative workplace environment.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Employee Account Usage',
+        icon: Icons.account_circle_outlined,
+        child: Text(
+          'Your StaffHub account is designated exclusively for your official employment activities. You must ensure that account credentials remain strictly confidential. Sharing login credentials, passwords, or granting unauthorized access to third parties is strictly prohibited. You remain responsible for all transactions, punches, and actions logged under your authenticated credentials.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Attendance Rules',
+        icon: Icons.timer_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Employees are responsible for logging accurate timekeeping records in accordance with company work policies:',
+              style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+            ),
+            const SizedBox(height: 8),
+            _bullet('Punctual Punching',
+                'Check in at the start of your shift and check out upon concluding work for the day.'),
+            _bullet('Break Tracking',
+                'Log break intervals (such as tea and lunch breaks) accurately using the break management tools.'),
+            _bullet('Work Mode Compliance',
+                'Select and record the correct work mode (Office or Work From Home) as authorized by management.'),
+            _bullet('Discrepancy Reporting',
+                'In the event of missed punches or technical errors, promptly contact your supervisor or HR for regularisation.'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Leave Policy',
+        icon: Icons.event_note_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Leave applications and approvals are governed by company human resource guidelines:',
+              style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+            ),
+            const SizedBox(height: 8),
+            _bullet('Timely Application',
+                'Submit leave requests in advance through the StaffHub Leave section whenever foreseeable.'),
+            _bullet('Approval Process',
+                'Leaves are subject to review and formal approval based on team coverage and leave entitlements.'),
+            _bullet('Leave Types',
+                'Submit requests under the proper category (Casual, Sick, Annual, or Medical Leave).'),
+            _bullet('Documentation',
+                'Medical proof or certification may be required for extended or specialized medical leaves as specified by HR.'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Workplace Responsibilities',
+        icon: Icons.assignment_turned_in_outlined,
+        child: Text(
+          'Employees are expected to act professionally, communicate respectfully, and fulfill their designated job duties diligently. Daily work logs and task summaries must be kept up to date to ensure seamless operational continuity across tech and customer-facing teams.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Acceptable Use of the StaffHub Application',
+        icon: Icons.rule_outlined,
+        child: Text(
+          'StaffHub is provided solely for legitimate business operations. Prohibited activities include:\n\n• Attempting to disrupt, bypass, or tamper with system architecture, security controls, or attendance tracking.\n• Submitting false, fraudulent, or falsified attendance or leave requests.\n• Using internal chat or communication channels to distribute offensive, defamatory, or inappropriate material.\n• Reverse-engineering, copying, or scraping application source code and proprietary assets.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Account Security',
+        icon: Icons.lock_outline,
+        child: Text(
+          'Employees must practice strong password hygiene and secure their devices when accessing StaffHub. If you suspect your account has been compromised or notice unauthorized access, notify the IT Helpdesk and HR immediately. The organization reserves the right to suspend accounts pending security reviews.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _sectionCard(
+        title: 'Policy Updates',
+        icon: Icons.update_outlined,
+        child: Text(
+          'Management and Human Resources reserve the right to amend or update these Terms & Conditions as company practices, legal standards, or operational workflows evolve. Substantive updates will be published within the app. Continued use of StaffHub following notifications constitutes your acknowledgment and acceptance of the revised terms.',
+          style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
+        ),
+      ),
+      const SizedBox(height: 24),
+    ]);
+
+    if (isStandalone) {
+      return Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          title: Text(
+            'Terms & Conditions',
+            style: TextStyle(
+                fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
+          ),
+          leading: IconButton(
+            icon: Icon(Icons.arrow_back, color: _ink),
+            onPressed: onBack ?? () => Navigator.of(context).pop(),
+          ),
+          backgroundColor: _surface,
+          elevation: 0,
+        ),
+        body: content,
+      );
+    }
+    return content;
+  }
+}
+
+class StaffSupportHelpdeskPage extends StatelessWidget {
+  const StaffSupportHelpdeskPage({
+    super.key,
+    this.isStandalone = false,
+    this.onBack,
+  });
+
+  final bool isStandalone;
+  final VoidCallback? onBack;
+
+  Widget _contactTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color iconColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: iconColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: _ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(fontSize: 11.5, color: _muted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _faqTile(BuildContext context,
+      {required String question, required String answer}) {
+    return Material(
+      color: Colors.transparent,
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          dividerColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          iconColor: _blue,
+          collapsedIconColor: _muted,
+          title: Text(
+            question,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: _ink,
+            ),
+          ),
+          children: [
+            Text(
+              answer,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.5,
+                color: _muted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final content = _ScrollPage(children: [
+      const SizedBox(height: 14),
+      _ProfileCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _isDark
+                      ? const Color(0xff1d2b40)
+                      : const Color(0xffeaf0ff),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.support_agent, color: _blue, size: 24),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Support & Helpdesk',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Need assistance? We are here to help.',
+                      style: TextStyle(fontSize: 11.5, color: _muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 20),
+      Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 8),
+        child: Text(
+          'CONTACT SUPPORT',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1,
+            color: _muted,
+          ),
+        ),
+      ),
+      _ProfileCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _contactTile(
+                icon: Icons.badge_outlined,
+                title: 'HR Department',
+                subtitle: 'hr@lysoftware.com • HR Operations Desk',
+                iconColor: _blue,
+              ),
+              Divider(height: 1, color: _line),
+              _contactTile(
+                icon: Icons.mail_outline,
+                title: 'Email Support',
+                subtitle: 'support@staffhub.com • Response within 24h',
+                iconColor: const Color(0xff10b981),
+              ),
+              Divider(height: 1, color: _line),
+              _contactTile(
+                icon: Icons.phone_outlined,
+                title: 'Phone Support',
+                subtitle: '+91 80 4567 8900 • Mon – Fri (9 AM – 6 PM)',
+                iconColor: const Color(0xfff59e0b),
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 22),
+      Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 8),
+        child: Text(
+          'FREQUENTLY ASKED QUESTIONS (FAQ)',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1,
+            color: _muted,
+          ),
+        ),
+      ),
+      _ProfileCard(
+        child: Column(
+          children: [
+            _faqTile(
+              context,
+              question: 'How can I mark attendance?',
+              answer:
+                  'Navigate to the Punch page from the navigation bar. Tap the "Check In" button when beginning work. When taking lunch or tea breaks, tap "Start Break" and resume work with "End Break". At the end of your workday, tap "Check Out" to complete your daily attendance record.',
+            ),
+            Divider(height: 1, color: _line),
+            _faqTile(
+              context,
+              question: 'How can I apply for leave?',
+              answer:
+                  'Go to the Leave tab from the navigation bar. Select your leave category (Casual, Sick, Annual, or Medical Leave), choose your start and end dates, specify your reason for absence, and tap "Submit Request". You will be notified once HR and your manager review the application.',
+            ),
+            Divider(height: 1, color: _line),
+            _faqTile(
+              context,
+              question: 'How can I check my attendance history?',
+              answer:
+                  'Open the Punch tab and scroll down to the "Attendance History" section. You can view your recent punch logs with dates, check-in times, and statuses. Tapping any history record opens the detailed view showing complete punch times, scheduled hours, and break logs.',
+            ),
+            Divider(height: 1, color: _line),
+            _faqTile(
+              context,
+              question: 'How can I change my password?',
+              answer:
+                  'Navigate to Settings > Security to update your account password. If you cannot log in or have forgotten your password, reach out to your HR administrator or the IT Helpdesk at support@staffhub.com for a secure password reset.',
+            ),
+            Divider(height: 1, color: _line),
+            _faqTile(
+              context,
+              question: 'What should I do if I face a technical issue?',
+              answer:
+                  'If you encounter errors, sync problems, or unexpected app behavior, please try restarting the application. If the issue persists, capture a screenshot and contact the IT Helpdesk at support@staffhub.com or call +91 80 4567 8900 with your employee ID and issue description.',
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 24),
+    ]);
+
+    if (isStandalone) {
+      return Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          title: Text(
+            'Support & Helpdesk',
+            style: TextStyle(
+                fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
+          ),
+          leading: IconButton(
+            icon: Icon(Icons.arrow_back, color: _ink),
+            onPressed: onBack ?? () => Navigator.of(context).pop(),
+          ),
+          backgroundColor: _surface,
+          elevation: 0,
+        ),
+        body: content,
+      );
+    }
+    return content;
   }
 }
 
@@ -5695,19 +6427,28 @@ class _NotificationSwitch extends StatelessWidget {
 }
 
 class _ProfilePage extends StatefulWidget {
-  const _ProfilePage(
-      {required this.onLogout,
-      required this.staff,
-      required this.repository,
-      required this.department,
-      required this.workMode,
-      required this.workLocation});
+  const _ProfilePage({
+    required this.onLogout,
+    required this.staff,
+    required this.repository,
+    required this.department,
+    required this.workMode,
+    this.workLocation,
+    this.onOpenPrivacyPolicy,
+    this.onOpenTerms,
+    this.onOpenSupport,
+  });
+
   final VoidCallback onLogout;
   final Staff staff;
   final HRRepository repository;
   final String department;
   final String workMode;
   final String? workLocation;
+  final VoidCallback? onOpenPrivacyPolicy;
+  final VoidCallback? onOpenTerms;
+  final VoidCallback? onOpenSupport;
+
   @override
   State<_ProfilePage> createState() => _ProfilePageState();
 }
@@ -5715,7 +6456,6 @@ class _ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<_ProfilePage> {
   late Staff _staff;
   bool _isLoading = false;
-  bool _isSaving = false;
   bool _notificationsEnabled = true;
 
   @override
@@ -5735,67 +6475,39 @@ class _ProfilePageState extends State<_ProfilePage> {
     }
   }
 
-  Future<void> _editProfile() async {
-    final phoneController = TextEditingController(text: _staff.phoneNumber);
-    final addressController = TextEditingController(text: _staff.address);
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Profile'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(labelText: 'Phone Number'),
-            ),
-            TextField(
-              controller: addressController,
-              decoration: const InputDecoration(labelText: 'Address'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+  void _openPrivacy() {
+    if (widget.onOpenPrivacyPolicy != null) {
+      widget.onOpenPrivacyPolicy!();
+    } else {
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => const StaffPrivacyPolicyPage(isStandalone: true),
+      ));
+    }
+  }
 
-    if (result == true) {
-      setState(() => _isSaving = true);
-      try {
-        await widget.repository.updateProfile(
-          phone: phoneController.text,
-          address: addressController.text,
-        );
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile updated successfully')),
-          );
-          _loadProfile();
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to update profile: $e')),
-          );
-        }
-      } finally {
-        if (mounted) setState(() => _isSaving = false);
-      }
+  void _openTerms() {
+    if (widget.onOpenTerms != null) {
+      widget.onOpenTerms!();
+    } else {
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => const StaffTermsConditionsPage(isStandalone: true),
+      ));
+    }
+  }
+
+  void _openSupport() {
+    if (widget.onOpenSupport != null) {
+      widget.onOpenSupport!();
+    } else {
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => const StaffSupportHelpdeskPage(isStandalone: true),
+      ));
     }
   }
 
   @override
   Widget build(BuildContext context) => _ScrollPage(children: [
-        if (_isLoading || _isSaving) const LinearProgressIndicator(),
+        if (_isLoading) const LinearProgressIndicator(),
         const SizedBox(height: 12),
         Center(
             child: Column(children: [
@@ -5819,7 +6531,7 @@ class _ProfilePageState extends State<_ProfilePage> {
                       _staff.name.isEmpty
                           ? 'S'
                           : _staff.name.characters.first.toUpperCase(),
-                      style: TextStyle(
+                      style: const TextStyle(
                           color: Colors.white,
                           fontSize: 24,
                           fontWeight: FontWeight.w700)))),
@@ -5841,18 +6553,9 @@ class _ProfilePageState extends State<_ProfilePage> {
                   _profileStat('Status', 'Active')
                 ]))),
         const SizedBox(height: 22),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('Personal Information',
-                style: TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 15, color: _ink)),
-            IconButton(
-              icon: const Icon(Icons.edit, size: 20),
-              onPressed: _isSaving ? null : _editProfile,
-            ),
-          ],
-        ),
+        Text('Personal Information',
+            style: TextStyle(
+                fontWeight: FontWeight.w700, fontSize: 15, color: _ink)),
         const SizedBox(height: 10),
         _ProfileCard(
             child: Padding(
@@ -5893,12 +6596,15 @@ class _ProfilePageState extends State<_ProfilePage> {
                                   () => _notificationsEnabled = enabled),
                               materialTapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap)),
-                      const _SettingRow(Icons.privacy_tip_outlined,
-                          'Privacy & Policy', 'Manage your data & privacy'),
-                      const _SettingRow(Icons.description_outlined,
-                          'Terms & Conditions', 'View company policies'),
-                      const _SettingRow(Icons.help_outline,
-                          'Support & Helpdesk', 'Raise a support ticket')
+                      _SettingRow(Icons.privacy_tip_outlined,
+                          'Privacy & Policy', 'Manage your data & privacy',
+                          onTap: _openPrivacy),
+                      _SettingRow(Icons.description_outlined,
+                          'Terms & Conditions', 'View company policies',
+                          onTap: _openTerms),
+                      _SettingRow(Icons.help_outline,
+                          'Support & Helpdesk', 'Raise a support ticket',
+                          onTap: _openSupport)
                     ]))),
         const SizedBox(height: 22),
         SizedBox(
@@ -5918,7 +6624,7 @@ class _ProfilePageState extends State<_ProfilePage> {
                         borderRadius: BorderRadius.circular(10))))),
         Center(
             child: Padding(
-                padding: EdgeInsets.all(7),
+                padding: const EdgeInsets.all(7),
                 child: Text(
                     'StaffHub Systems Inc. • Secure Staff Portal • v2.4.0',
                     style: TextStyle(fontSize: 10, color: _muted)))),
