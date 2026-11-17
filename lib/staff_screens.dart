@@ -372,10 +372,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
           repository: widget.repository,
           department: widget.department,
           workMode: widget.workMode,
-          workLocation: widget.workLocation,
-          onOpenPrivacyPolicy: () => _openSettingsSubPage(7),
-          onOpenTerms: () => _openSettingsSubPage(8),
-          onOpenSupport: () => _openSettingsSubPage(5)),
+          workLocation: widget.workLocation),
       1 => const _SettingsDetailPage(
           icon: Icons.lock_outline,
           title: 'Security',
@@ -477,7 +474,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
             4 => 'Appearance',
             5 => 'Support & Helpdesk',
             6 => 'About',
-            7 => 'Privacy & Policy',
+            7 => 'Privacy Policy',
             8 => 'Terms & Conditions',
             _ => 'Settings',
           }
@@ -5668,7 +5665,7 @@ class StaffPrivacyPolicyPage extends StatelessWidget {
         title: 'Introduction',
         icon: Icons.info_outline,
         child: Text(
-          'Welcome to StaffHub. We value your privacy and are committed to safeguarding personal and professional data collected during your employment and use of the StaffHub application. This policy details how employee information is gathered, managed, utilized, and safeguarded within the organization.\n\nBy accessing and utilizing StaffHub, you acknowledge that your information will be processed in accordance with this Privacy Policy and applicable workplace data protection regulations.',
+          'Your privacy is important to us.\n\nWelcome to StaffHub. We value your privacy and are committed to safeguarding personal and professional data collected during your employment and use of the StaffHub application. This policy details how employee information is gathered, managed, utilized, and safeguarded within the organization.\n\nBy accessing and utilizing StaffHub, you acknowledge that your information will be processed in accordance with this Privacy Policy and applicable workplace data protection regulations.',
           style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
         ),
       ),
@@ -5898,7 +5895,7 @@ class StaffTermsConditionsPage extends StatelessWidget {
         title: 'Introduction',
         icon: Icons.article_outlined,
         child: Text(
-          'These Terms & Conditions govern your access to and use of the StaffHub workplace application. By accessing or using the StaffHub portal, you acknowledge that you have read, understood, and agree to abide by these terms, company workplace guidelines, and all applicable employment policies.\n\nThese terms serve to maintain operational transparency, accountability, and a secure collaborative workplace environment.',
+          'By using this application, you agree to follow the rules and conditions of the application.\n\nThese Terms & Conditions govern your access to and use of the StaffHub workplace application. By accessing or using the StaffHub portal, you acknowledge that you have read, understood, and agree to abide by these terms, company workplace guidelines, and all applicable employment policies.\n\nThese terms serve to maintain operational transparency, accountability, and a secure collaborative workplace environment.',
           style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
         ),
       ),
@@ -5907,7 +5904,7 @@ class StaffTermsConditionsPage extends StatelessWidget {
         title: 'Employee Account Usage',
         icon: Icons.account_circle_outlined,
         child: Text(
-          'Your StaffHub account is designated exclusively for your official employment activities. You must ensure that account credentials remain strictly confidential. Sharing login credentials, passwords, or granting unauthorized access to third parties is strictly prohibited. You remain responsible for all transactions, punches, and actions logged under your authenticated credentials.',
+          'Users are responsible for keeping their account information secure. Your StaffHub account is designated exclusively for your official employment activities. You must ensure that account credentials remain strictly confidential. Sharing login credentials, passwords, or granting unauthorized access to third parties is strictly prohibited. You remain responsible for all transactions, punches, and actions logged under your authenticated credentials.',
           style: TextStyle(fontSize: 12.5, height: 1.55, color: _ink),
         ),
       ),
@@ -6434,9 +6431,6 @@ class _ProfilePage extends StatefulWidget {
     required this.department,
     required this.workMode,
     this.workLocation,
-    this.onOpenPrivacyPolicy,
-    this.onOpenTerms,
-    this.onOpenSupport,
   });
 
   final VoidCallback onLogout;
@@ -6445,9 +6439,6 @@ class _ProfilePage extends StatefulWidget {
   final String department;
   final String workMode;
   final String? workLocation;
-  final VoidCallback? onOpenPrivacyPolicy;
-  final VoidCallback? onOpenTerms;
-  final VoidCallback? onOpenSupport;
 
   @override
   State<_ProfilePage> createState() => _ProfilePageState();
@@ -6476,33 +6467,21 @@ class _ProfilePageState extends State<_ProfilePage> {
   }
 
   void _openPrivacy() {
-    if (widget.onOpenPrivacyPolicy != null) {
-      widget.onOpenPrivacyPolicy!();
-    } else {
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => const StaffPrivacyPolicyPage(isStandalone: true),
-      ));
-    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const StaffPrivacyPolicyPage(isStandalone: true),
+    ));
   }
 
   void _openTerms() {
-    if (widget.onOpenTerms != null) {
-      widget.onOpenTerms!();
-    } else {
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => const StaffTermsConditionsPage(isStandalone: true),
-      ));
-    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const StaffTermsConditionsPage(isStandalone: true),
+    ));
   }
 
   void _openSupport() {
-    if (widget.onOpenSupport != null) {
-      widget.onOpenSupport!();
-    } else {
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => const StaffSupportHelpdeskPage(isStandalone: true),
-      ));
-    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const StaffSupportHelpdeskPage(isStandalone: true),
+    ));
   }
 
   @override

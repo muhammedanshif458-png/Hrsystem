@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'staff_screens.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -223,25 +224,25 @@ class _ProfilePageState extends State<ProfilePage> {
         _menuItem(
         context,
         Icons.privacy_tip_outlined,
-        "Privacy Policy",
-        "Read our privacy policy",
-        const PrivacyPolicyPage(),
+        "Privacy & Policy",
+        "Manage your data & privacy",
+        const StaffPrivacyPolicyPage(isStandalone: true),
         ),
 
         _menuItem(
         context,
         Icons.description_outlined,
         "Terms & Conditions",
-        "Read terms and conditions",
-        const TermsPage(),
+        "View company policies",
+        const StaffTermsConditionsPage(isStandalone: true),
         ),
 
         _menuItem(
         context,
         Icons.help_outline,
-        "FAQ",
-        "Frequently asked questions",
-        const FAQPage(),
+        "Support & Helpdesk",
+        "Raise a support ticket",
+        const StaffSupportHelpdeskPage(isStandalone: true),
         ),
 
         const SizedBox(height: 30),
@@ -504,23 +505,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
         @override
         Widget build(BuildContext context) {
-        return _textPage(
-        context,
-        "PRIVACY POLICY",
-        """
-Your privacy is important to us.
-
-This application collects user information such as name,
-email, phone number and address for account management
-and application functionality.
-
-Your information will be handled securely and will not
-be shared unnecessarily with third parties.
-
-By using this application, you agree to the collection
-and use of information as described in this Privacy Policy.
-""",
-        );
+        return const StaffPrivacyPolicyPage(isStandalone: true);
         }
         }
 
@@ -534,139 +519,21 @@ and use of information as described in this Privacy Policy.
 
         @override
         Widget build(BuildContext context) {
-        return _textPage(
-        context,
-        "TERMS & CONDITIONS",
-        """
-By using this application, you agree to follow the
-rules and conditions of the application.
-
-Users are responsible for keeping their account
-information secure.
-
-The application should only be used for its intended
-purpose.
-
-We reserve the right to update these terms when necessary.
-""",
-        );
+        return const StaffTermsConditionsPage(isStandalone: true);
         }
         }
 
 
 // =====================================================
-// FAQ PAGE
+// FAQ / SUPPORT PAGE
 // =====================================================
 
-          class FAQPage extends StatelessWidget {
+        class FAQPage extends StatelessWidget {
         const FAQPage({super.key});
 
         @override
         Widget build(BuildContext context) {
-        return Scaffold(
-        backgroundColor: const Color(0xFF121212),
-
-        appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: const Text(
-        "FAQ",
-        style: TextStyle(
-        color: Colors.white,
-        fontWeight: FontWeight.bold,
-        ),
-        ),
-        iconTheme: const IconThemeData(
-        color: Colors.white,
-        ),
-        ),
-
-        body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: const [
-
-        _FAQItem(
-        question: "How can I change my password?",
-        answer:
-        "Open Profile → Change Password and update your password.",
-        ),
-
-        _FAQItem(
-        question: "Can I edit my profile information?",
-        answer:
-        "Yes. Open Profile and select Edit Profile.",
-        ),
-
-        _FAQItem(
-        question: "How can I logout?",
-        answer:
-        "Open your Profile page and select Logout.",
-        ),
-
-        _FAQItem(
-        question: "Is my account information secure?",
-        answer:
-        "Account information should be protected using appropriate security practices.",
-        ),
-        ],
-        ),
-        );
-        }
-        }
-
-
-// =====================================================
-// FAQ ITEM
-// =====================================================
-
-          class _FAQItem extends StatelessWidget {
-        final String question;
-        final String answer;
-
-        const _FAQItem({
-        required this.question,
-        required this.answer,
-        });
-
-        @override
-        Widget build(BuildContext context) {
-        return Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(15),
-        ),
-        child: ExpansionTile(
-        iconColor: const Color(0xFFD4AF37),
-        collapsedIconColor: Colors.grey,
-
-        title: Text(
-        question,
-        style: const TextStyle(
-        color: Colors.white,
-        fontWeight: FontWeight.w600,
-        ),
-        ),
-
-        children: [
-        Padding(
-        padding: const EdgeInsets.fromLTRB(
-        16,
-        0,
-        16,
-        16,
-        ),
-        child: Text(
-        answer,
-        style: const TextStyle(
-        color: Colors.grey,
-        height: 1.5,
-        ),
-        ),
-        ),
-        ],
-        ),
-        );
+        return const StaffSupportHelpdeskPage(isStandalone: true);
         }
         }
 
@@ -784,51 +651,6 @@ We reserve the right to update these terms when necessary.
             text,
             style: const TextStyle(
               fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      );
-    }
-
-
-// =====================================================
-// TEXT PAGE
-// =====================================================
-
-    Widget _textPage(
-        BuildContext context,
-        String title,
-        String content,
-        ) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF121212),
-
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-
-          title: Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          iconTheme: const IconThemeData(
-            color: Colors.white,
-          ),
-        ),
-
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-
-          child: Text(
-            content,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 15,
-              height: 1.7,
             ),
           ),
         ),

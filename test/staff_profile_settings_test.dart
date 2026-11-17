@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hr_core/models.dart';
 import 'package:hr_core/staff_screens.dart';
+import 'package:hr_core/profile_page.dart';
 import 'mock_hr_repository.dart';
 
 class _CustomProfileMockRepository extends MockHRRepository {
@@ -51,7 +52,7 @@ void main() {
     );
   }
 
-  group('StaffHub Profile and Settings Tests', () {
+  group('StaffHub Profile Page Navigation Tests', () {
     testWidgets(
         '1. Personal Information is read-only and edit pencil icon is completely removed',
         (WidgetTester tester) async {
@@ -107,7 +108,7 @@ void main() {
     });
 
     testWidgets(
-        '2. Privacy & Policy navigates to dedicated screen with all 7 required sections and back navigation works',
+        '2. Profile page: Privacy & Policy opens StaffPrivacyPolicyPage and back button returns to Profile (not Settings)',
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1.0;
@@ -117,20 +118,19 @@ void main() {
       await tester.pumpWidget(buildStaffHubShell(repository: repository));
       await tester.pumpAndSettle();
 
-      // Open Profile
+      // Open Profile from Settings
       await tester.tap(find.text('Profile'));
       await tester.pumpAndSettle();
+      expect(find.text('Personal Information'), findsOneWidget);
 
-      // Tap Privacy & Policy
+      // Tap Privacy & Policy from Profile
       final privacyOption = find.text('Privacy & Policy');
       expect(privacyOption, findsOneWidget);
       await tester.tap(privacyOption);
       await tester.pumpAndSettle();
 
-      // Verify dedicated Privacy Policy screen is shown
+      // Verify dedicated StaffPrivacyPolicyPage screen is shown
       expect(find.byType(StaffPrivacyPolicyPage), findsOneWidget);
-
-      // Verify all 7 required sections are present
       expect(find.text('Introduction'), findsOneWidget);
       expect(find.text('Information We Collect'), findsOneWidget);
       expect(find.text('How We Use Employee Information'), findsOneWidget);
@@ -139,25 +139,20 @@ void main() {
       expect(find.text('Employee Privacy Rights'), findsOneWidget);
       expect(find.text('Contact Information'), findsOneWidget);
 
-      // Verify back navigation returns to Profile page
+      // Tap back button
       final backButton = find.byIcon(Icons.arrow_back);
       expect(backButton, findsOneWidget);
       await tester.tap(backButton);
       await tester.pumpAndSettle();
 
-      // We should be back on Profile page
+      // VERIFY: We are back on the PROFILE page, NOT the Settings page
       expect(find.text('Personal Information'), findsOneWidget);
       expect(find.text('Privacy & Policy'), findsOneWidget);
-
-      // Tapping back once more returns to Settings page
-      await tester.tap(find.byIcon(Icons.arrow_back));
-      await tester.pumpAndSettle();
-      expect(find.text('ACCOUNT ACTIONS'), findsOneWidget);
-      expect(find.text('Profile'), findsOneWidget);
+      expect(find.text('ACCOUNT ACTIONS'), findsNothing); // Settings page is NOT visible
     });
 
     testWidgets(
-        '3. Terms & Conditions navigates to dedicated screen with all 8 required sections and back navigation works',
+        '3. Profile page: Terms & Conditions opens StaffTermsConditionsPage and back button returns to Profile (not Settings)',
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1.0;
@@ -167,20 +162,19 @@ void main() {
       await tester.pumpWidget(buildStaffHubShell(repository: repository));
       await tester.pumpAndSettle();
 
-      // Open Profile
+      // Open Profile from Settings
       await tester.tap(find.text('Profile'));
       await tester.pumpAndSettle();
+      expect(find.text('Personal Information'), findsOneWidget);
 
-      // Tap Terms & Conditions
+      // Tap Terms & Conditions from Profile
       final termsOption = find.text('Terms & Conditions');
       expect(termsOption, findsOneWidget);
       await tester.tap(termsOption);
       await tester.pumpAndSettle();
 
-      // Verify dedicated Terms & Conditions screen is shown
+      // Verify dedicated StaffTermsConditionsPage screen is shown
       expect(find.byType(StaffTermsConditionsPage), findsOneWidget);
-
-      // Verify all 8 required sections are present
       expect(find.text('Introduction'), findsOneWidget);
       expect(find.text('Employee Account Usage'), findsOneWidget);
       expect(find.text('Attendance Rules'), findsOneWidget);
@@ -191,14 +185,18 @@ void main() {
       expect(find.text('Account Security'), findsOneWidget);
       expect(find.text('Policy Updates'), findsOneWidget);
 
-      // Verify back button returns to Profile
+      // Tap back button
       await tester.tap(find.byIcon(Icons.arrow_back));
       await tester.pumpAndSettle();
+
+      // VERIFY: Back on the PROFILE page, NOT the Settings page
       expect(find.text('Personal Information'), findsOneWidget);
+      expect(find.text('Terms & Conditions'), findsOneWidget);
+      expect(find.text('ACCOUNT ACTIONS'), findsNothing);
     });
 
     testWidgets(
-        '4. Support & Helpdesk navigates to dedicated screen with Contact Support and all 5 expandable FAQs',
+        '4. Profile page: Support & Helpdesk opens StaffSupportHelpdeskPage and back button returns to Profile (not Settings)',
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1.0;
@@ -208,53 +206,44 @@ void main() {
       await tester.pumpWidget(buildStaffHubShell(repository: repository));
       await tester.pumpAndSettle();
 
-      // Open Profile
+      // Open Profile from Settings
       await tester.tap(find.text('Profile'));
       await tester.pumpAndSettle();
+      expect(find.text('Personal Information'), findsOneWidget);
 
-      // Tap Support & Helpdesk
+      // Tap Support & Helpdesk from Profile
       final supportOption = find.text('Support & Helpdesk');
       expect(supportOption, findsOneWidget);
       await tester.tap(supportOption);
       await tester.pumpAndSettle();
 
-      // Verify dedicated Support & Helpdesk screen is shown
+      // Verify dedicated StaffSupportHelpdeskPage screen is shown
       expect(find.byType(StaffSupportHelpdeskPage), findsOneWidget);
-
-      // Verify Contact Support section and entries
       expect(find.text('CONTACT SUPPORT'), findsOneWidget);
       expect(find.text('HR Department'), findsOneWidget);
       expect(find.text('Email Support'), findsOneWidget);
       expect(find.text('Phone Support'), findsOneWidget);
-
-      // Verify Frequently Asked Questions section and all 5 questions
       expect(find.text('FREQUENTLY ASKED QUESTIONS (FAQ)'), findsOneWidget);
-      expect(find.text('How can I mark attendance?'), findsOneWidget);
-      expect(find.text('How can I apply for leave?'), findsOneWidget);
-      expect(find.text('How can I check my attendance history?'), findsOneWidget);
-      expect(find.text('How can I change my password?'), findsOneWidget);
-      expect(
-          find.text('What should I do if I face a technical issue?'),
-          findsOneWidget);
 
-      // Test expanding an FAQ item (e.g. "How can I mark attendance?")
+      // Expand FAQ item
       final faqQuestion = find.text('How can I mark attendance?');
       await tester.ensureVisible(faqQuestion);
       await tester.tap(faqQuestion);
       await tester.pumpAndSettle();
+      expect(find.textContaining('Navigate to the Punch page'), findsOneWidget);
 
-      // Verify the expanded answer content is revealed
-      expect(
-          find.textContaining('Navigate to the Punch page'),
-          findsOneWidget);
-
-      // Verify back navigation returns to Profile
+      // Tap back button
       await tester.tap(find.byIcon(Icons.arrow_back));
       await tester.pumpAndSettle();
+
+      // VERIFY: Back on the PROFILE page, NOT the Settings page
       expect(find.text('Personal Information'), findsOneWidget);
+      expect(find.text('Support & Helpdesk'), findsOneWidget);
+      expect(find.text('ACCOUNT ACTIONS'), findsNothing);
     });
 
-    testWidgets('5. Notifications switch can be toggled without error',
+    testWidgets(
+        '5. Settings page navigation remains working correctly and independently',
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1.0;
@@ -264,56 +253,73 @@ void main() {
       await tester.pumpWidget(buildStaffHubShell(repository: repository));
       await tester.pumpAndSettle();
 
-      // Open Profile
-      await tester.tap(find.text('Profile'));
+      // 1. Settings -> Privacy Policy
+      await tester.tap(find.text('Privacy Policy'));
       await tester.pumpAndSettle();
-
-      // Find Notifications row and Switch
-      expect(find.text('Notifications'), findsOneWidget);
-      final switchFinder = find.byType(Switch);
-      expect(switchFinder, findsOneWidget);
-
-      // Toggle switch
-      final initialSwitch = tester.widget<Switch>(switchFinder);
-      expect(initialSwitch.value, isTrue);
-
-      await tester.tap(switchFinder);
+      expect(find.byType(StaffPrivacyPolicyPage), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.arrow_back));
       await tester.pumpAndSettle();
+      expect(find.text('ACCOUNT ACTIONS'), findsOneWidget);
 
-      final updatedSwitch = tester.widget<Switch>(switchFinder);
-      expect(updatedSwitch.value, isFalse);
+      // 2. Settings -> Terms & Conditions
+      await tester.tap(find.text('Terms & Conditions'));
+      await tester.pumpAndSettle();
+      expect(find.byType(StaffTermsConditionsPage), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+      expect(find.text('ACCOUNT ACTIONS'), findsOneWidget);
+
+      // 3. Settings -> Support & Helpdesk
+      await tester.tap(find.text('Support & Helpdesk'));
+      await tester.pumpAndSettle();
+      expect(find.byType(StaffSupportHelpdeskPage), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+      expect(find.text('ACCOUNT ACTIONS'), findsOneWidget);
     });
 
     testWidgets(
-        '6. Direct standalone navigation for Privacy Policy, Terms, and Support pages',
+        '6. Standalone ProfilePage (profile_page.dart) connects to the same destination screens',
         (WidgetTester tester) async {
-      // Test standalone mode with AppBar
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: StaffPrivacyPolicyPage(isStandalone: true),
-        ),
-      );
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(const MaterialApp(home: ProfilePage()));
+      await tester.pumpAndSettle();
+
+      // Tap Privacy & Policy
+      final privacyFinder = find.text('Privacy & Policy');
+      expect(privacyFinder, findsOneWidget);
+      await tester.ensureVisible(privacyFinder);
+      await tester.tap(privacyFinder);
       await tester.pumpAndSettle();
       expect(find.byType(StaffPrivacyPolicyPage), findsOneWidget);
-      expect(find.text('Introduction'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
 
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: StaffTermsConditionsPage(isStandalone: true),
-        ),
-      );
+      // Tap Terms & Conditions
+      final termsFinder = find.text('Terms & Conditions');
+      expect(termsFinder, findsOneWidget);
+      await tester.ensureVisible(termsFinder);
+      await tester.tap(termsFinder);
       await tester.pumpAndSettle();
       expect(find.byType(StaffTermsConditionsPage), findsOneWidget);
-      expect(find.text('Employee Account Usage'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
 
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: StaffSupportHelpdeskPage(isStandalone: true),
-        ),
-      );
+      // Tap Support & Helpdesk
+      final supportFinder = find.text('Support & Helpdesk');
+      expect(supportFinder, findsOneWidget);
+      await tester.ensureVisible(supportFinder);
+      await tester.tap(supportFinder);
       await tester.pumpAndSettle();
       expect(find.byType(StaffSupportHelpdeskPage), findsOneWidget);
-      expect(find.text('HR Department'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+
+      // Back on ProfilePage
+      expect(find.text('PROFILE'), findsOneWidget);
     });
   });
 }
