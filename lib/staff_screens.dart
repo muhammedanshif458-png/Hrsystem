@@ -449,6 +449,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
         repository: widget.repository,
         department: widget.department,
         workMode: widget.workMode,
+        staff: widget.staff,
         attendanceRecords: widget.repository.attendanceList.value
             .where((a) =>
                 widget.staff.id.isEmpty ||
@@ -481,6 +482,279 @@ class _StaffHubShellState extends State<StaffHubShell> {
         : titles[widget.pageIndex];
     final isChatPage = widget.pageIndex == 3 && _settingsSubPage == 2;
     final desktop = MediaQuery.sizeOf(context).width >= 900;
+    if (desktop) {
+      return Theme(
+        data: staffTheme,
+        child: Scaffold(
+          backgroundColor: const Color(0xffedf0f5),
+          body: Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 1320),
+              margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0e000000),
+                    blurRadius: 28,
+                    offset: Offset(0, 8),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.fromLTRB(28, 22, 28, 24),
+              child: Column(
+                children: [
+                  // Desktop Header Row
+                  Row(
+                    children: [
+                      if (widget.pageIndex == 3 && _settingsSubPage != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: IconButton(
+                            icon: const Icon(Icons.arrow_back, color: Color(0xff0f172a)),
+                            onPressed: _popSettingsSubPage,
+                          ),
+                        ),
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xff0f172a),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.people_alt_rounded, color: Colors.white, size: 20),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'StaffHub',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xff0f172a),
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      const Spacer(),
+                      // Department pill badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xfff8fafc),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xffe2e8f0)),
+                        ),
+                        child: Text(
+                          isChatPage
+                              ? (widget.staff.department.trim().isEmpty
+                                  ? 'DEPARTMENT UNAVAILABLE'
+                                  : canonicalDepartmentKey(widget.staff.department).toUpperCase())
+                              : canonicalDepartmentKey(widget.department).toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xff334155),
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Chat button
+                      GestureDetector(
+                        onTap: _openChat,
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xffe2e8f0)),
+                          ),
+                          child: const Icon(Icons.chat_bubble_outline_rounded, size: 18, color: Color(0xff334155)),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      // Profile chip
+                      GestureDetector(
+                        onTap: () {
+                          _openSettingsSubPage(0);
+                          widget.onNavigate(3);
+                        },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircleAvatar(
+                              radius: 17,
+                              backgroundColor: const Color(0xff0f172a),
+                              child: Text(
+                                widget.staff.name.isEmpty ? 'S' : widget.staff.name[0].toUpperCase(),
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  widget.staff.name,
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                ),
+                                Text(
+                                  widget.department,
+                                  style: const TextStyle(fontSize: 11, color: Color(0xff64748b)),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  // Body Row: Sidebar + Pages
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // WORKSPACE Sidebar
+                        Container(
+                          width: 220,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: const Color(0xffe2e8f0), width: 1.2),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                child: Text(
+                                  'WORKSPACE',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    letterSpacing: 1.2,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xff94a3b8),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              for (var i = 0; i < titles.length; i++) ...[
+                                Material(
+                                  color: widget.pageIndex == i ? const Color(0xffeff6ff) : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(12),
+                                    onTap: () {
+                                      if (_settingsSubPage != null) {
+                                        setState(() {
+                                          _settingsSubPage = null;
+                                          _settingsHistory.clear();
+                                        });
+                                      }
+                                      if (i == 0 || i == 2) {
+                                        unawaited(widget.repository.fetchStaffLeaves());
+                                      }
+                                      widget.onNavigate(i);
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: widget.pageIndex == i
+                                            ? Border.all(color: const Color(0xffbfdbfe), width: 1)
+                                            : null,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            [
+                                              Icons.home_outlined,
+                                              Icons.fingerprint,
+                                              Icons.calendar_month_outlined,
+                                              Icons.settings_outlined,
+                                            ][i],
+                                            size: 18,
+                                            color: widget.pageIndex == i ? const Color(0xff2563eb) : const Color(0xff64748b),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Text(
+                                            titles[i],
+                                            style: TextStyle(
+                                              fontSize: 13.5,
+                                              fontWeight: widget.pageIndex == i ? FontWeight.w600 : FontWeight.w500,
+                                              color: widget.pageIndex == i ? const Color(0xff1e40af) : const Color(0xff334155),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                              ],
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xfff8fafc),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 16,
+                                      backgroundColor: const Color(0xff0f172a),
+                                      child: Text(
+                                        widget.staff.name.isEmpty ? 'S' : widget.staff.name[0].toUpperCase(),
+                                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            widget.staff.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                          ),
+                                          Text(
+                                            widget.department,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(fontSize: 11, color: Color(0xff64748b)),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 24),
+                        // Main content
+                        Expanded(
+                          child: pages[widget.pageIndex],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Theme(
       data: staffTheme,
       child: MediaQuery(
@@ -490,12 +764,12 @@ class _StaffHubShellState extends State<StaffHubShell> {
         child: Scaffold(
           backgroundColor: staffTheme.scaffoldBackgroundColor,
           appBar: PreferredSize(
-            preferredSize: Size.fromHeight(desktop ? 68 : 56),
+            preferredSize: const Size.fromHeight(56),
             child: AppBar(
               backgroundColor: colorScheme.surface,
               surfaceTintColor: colorScheme.surface,
               elevation: 0,
-              titleSpacing: desktop ? 26 : 14,
+              titleSpacing: 14,
               leading: widget.pageIndex == 3 && _settingsSubPage != null
                   ? IconButton(
                       icon:
@@ -514,17 +788,17 @@ class _StaffHubShellState extends State<StaffHubShell> {
                           width: 24,
                           height: 24,
                           decoration: BoxDecoration(
-                              color: colorScheme.primary,
+                              color: const Color(0xff0f172a),
                               borderRadius: BorderRadius.circular(7)),
-                          child: Icon(Icons.badge_outlined,
-                              size: 15, color: colorScheme.onPrimary)),
+                          child: const Icon(Icons.people_alt_rounded,
+                              size: 15, color: Colors.white)),
                       const SizedBox(width: 8),
                       Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text('StaffHub',
                                 style: TextStyle(
-                                    fontSize: desktop ? 18 : 15,
+                                    fontSize: 15,
                                     fontWeight: FontWeight.w700,
                                     color: colorScheme.onSurface)),
                             Text(pageTitle,
@@ -539,18 +813,19 @@ class _StaffHubShellState extends State<StaffHubShell> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(
-                      color: const Color(0xffe9f0ff),
+                      color: const Color(0xfff8fafc),
+                      border: Border.all(color: const Color(0xffe2e8f0)),
                       borderRadius: BorderRadius.circular(16)),
                   child: Text(
                       isChatPage
                           ? (widget.staff.department.trim().isEmpty
-                              ? 'Department unavailable'
+                              ? 'DEPARTMENT UNAVAILABLE'
                               : canonicalDepartmentKey(widget.staff.department)
                                   .toUpperCase())
-                          : widget.department.toUpperCase(),
-                      style: TextStyle(
+                          : canonicalDepartmentKey(widget.department).toUpperCase(),
+                      style: const TextStyle(
                           fontSize: 10,
-                          color: _blue,
+                          color: Color(0xff334155),
                           fontWeight: FontWeight.w700,
                           letterSpacing: .4)),
                 ),
@@ -558,8 +833,8 @@ class _StaffHubShellState extends State<StaffHubShell> {
                   IconButton(
                     tooltip: 'Open chat',
                     onPressed: _openChat,
-                    icon: Icon(Icons.chat_bubble_outline,
-                        size: 20, color: colorScheme.primary),
+                    icon: const Icon(Icons.chat_bubble_outline_rounded,
+                        size: 20, color: Color(0xff334155)),
                   ),
                 if (isChatPage)
                   PopupMenuButton<String>(
@@ -581,147 +856,12 @@ class _StaffHubShellState extends State<StaffHubShell> {
                       size: 19, color: colorScheme.onSurfaceVariant),
                 if (widget.pageIndex == 3 && _settingsSubPage == 3)
                   const SizedBox(width: 14),
-                // CircleAvatar(radius: 12, backgroundColor: const Color(0xffe2eaf8), child: Text('A', style: TextStyle(fontSize: 12, color: _blue, fontWeight: FontWeight.w700))),
-                // const SizedBox(width: 13),
               ],
             ),
           ),
           body: SafeArea(
               top: false,
-              child: desktop
-                  ? Row(children: [
-                      Container(
-                        width: 232,
-                        decoration: BoxDecoration(
-                            color: colorScheme.surface,
-                            border: Border(right: BorderSide(color: _line))),
-                        child: Column(children: [
-                          Padding(
-                              padding:
-                                  const EdgeInsets.fromLTRB(22, 24, 18, 20),
-                              child: Row(children: [
-                                Container(
-                                    width: 38,
-                                    height: 38,
-                                    decoration: BoxDecoration(
-                                        color: colorScheme.primary,
-                                        borderRadius:
-                                            BorderRadius.circular(12)),
-                                    child: Icon(Icons.badge_outlined,
-                                        color: colorScheme.onPrimary,
-                                        size: 22)),
-                                const SizedBox(width: 12),
-                                Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text('StaffHub',
-                                          style: TextStyle(
-                                              fontSize: 17,
-                                              fontWeight: FontWeight.w800,
-                                              color: _ink)),
-                                      Text('PEOPLE PORTAL',
-                                          style: TextStyle(
-                                              fontSize: 10,
-                                              letterSpacing: 1.2,
-                                              color: _muted))
-                                    ])
-                              ])),
-                          Padding(
-                              padding: const EdgeInsets.fromLTRB(18, 2, 18, 8),
-                              child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text('WORKSPACE',
-                                      style: TextStyle(
-                                          fontSize: 10,
-                                          letterSpacing: 1.2,
-                                          fontWeight: FontWeight.w700,
-                                          color: _muted)))),
-                          for (var i = 0; i < titles.length; i++)
-                            Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 3),
-                                child: Material(
-                                    color: widget.pageIndex == i
-                                        ? colorScheme.primaryContainer
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: ListTile(
-                                        dense: true,
-                                        shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(12)),
-                                        leading: Icon(
-                                            [
-                                              Icons.home_outlined,
-                                              Icons.fingerprint,
-                                              Icons.calendar_month_outlined,
-                                              Icons.settings_outlined
-                                            ][i],
-                                            color: widget.pageIndex == i
-                                                ? colorScheme.primary
-                                                : _muted),
-                                        title: Text(titles[i],
-                                            style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight:
-                                                    widget.pageIndex == i
-                                                        ? FontWeight.w700
-                                                        : FontWeight.w500,
-                                                color: widget.pageIndex == i
-                                                    ? colorScheme.primary
-                                                    : _ink)),
-                                        onTap: () {
-                                          if (_settingsSubPage != null) {
-                                            setState(() {
-                                              _settingsSubPage = null;
-                                              _settingsHistory.clear();
-                                            });
-                                          }
-                                          widget.onNavigate(i);
-                                        }))),
-                          const Spacer(),
-                          Container(
-                              margin: const EdgeInsets.all(16),
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                  color: _bg,
-                                  borderRadius: BorderRadius.circular(14)),
-                              child: Row(children: [
-                                CircleAvatar(
-                                    radius: 18,
-                                    backgroundColor:
-                                        colorScheme.primaryContainer,
-                                    child: Text(
-                                        widget.staff.name.isEmpty
-                                            ? 'S'
-                                            : widget.staff.name[0]
-                                                .toUpperCase(),
-                                        style: TextStyle(
-                                            color: colorScheme.primary,
-                                            fontWeight: FontWeight.w700))),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                    child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                      Text(widget.staff.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                              color: _ink)),
-                                      Text(widget.department,
-                                          style: TextStyle(
-                                              fontSize: 11, color: _muted))
-                                    ]))
-                              ]))
-                        ]),
-                      ),
-                      Expanded(child: pages[widget.pageIndex]),
-                    ])
-                  : pages[widget.pageIndex]),
+              child: pages[widget.pageIndex]),
           bottomNavigationBar: desktop
               ? null
               : NavigationBarTheme(
@@ -1371,6 +1511,8 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
           initialTitle: latest?.title ?? '',
           initialValue: latest?.updateText ?? '',
           repository: widget.repository,
+          staffName: widget.staffName,
+          department: widget.department,
         ),
       ),
     );
@@ -1424,42 +1566,38 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
         ? 'Not checked out'
         : 'Checked out at ${TimeOfDay.fromDateTime(widget.checkOutTime!).format(context)}';
     final activeLeave = _displayLeaveRequest;
+    // "Working On-Schedule" logic: show when checked in, not late, not on break
+    final workingOnSchedule = widget.checkedIn &&
+        attendance?.isLate != true &&
+        activeBreak == null;
+    final dateString =
+        '${const ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][now.weekday - 1]}, ${now.day} ${const ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][now.month - 1]}';
     return _ScrollPage(children: [
       const SizedBox(height: 12),
-      Text(
-          '${const [
-            'Monday',
-            'Tuesday',
-            'Wednesday',
-            'Thursday',
-            'Friday',
-            'Saturday',
-            'Sunday'
-          ][now.weekday - 1]}, ${now.day} ${const [
-            'Jan',
-            'Feb',
-            'Mar',
-            'Apr',
-            'May',
-            'Jun',
-            'Jul',
-            'Aug',
-            'Sep',
-            'Oct',
-            'Nov',
-            'Dec'
-          ][now.month - 1]}',
-          style: TextStyle(fontSize: 14, color: _muted)),
+      Text(dateString, style: TextStyle(fontSize: 14, color: _muted)),
       const SizedBox(height: 5),
       Row(children: [
         Expanded(
             child: Text('Good Morning, ${widget.staffName} 👋',
                 style: TextStyle(
-                    fontSize: 20, color: _ink, fontWeight: FontWeight.w700))),
+                    fontSize: 26, color: _ink, fontWeight: FontWeight.w800))),
       ]),
-      const SizedBox(height: 6),
-      Text('Department: ${widget.department}  ·  Work Mode: ${widget.workMode}',
-          style: TextStyle(fontSize: 12, color: _muted)),
+      const SizedBox(height: 4),
+      RichText(
+          text: TextSpan(
+              style: TextStyle(fontSize: 13, color: _muted),
+              children: [
+            const TextSpan(text: 'Department: '),
+            TextSpan(
+                text: widget.department,
+                style:
+                    TextStyle(fontWeight: FontWeight.w700, color: _ink)),
+            const TextSpan(text: ' · Work Mode: '),
+            TextSpan(
+                text: widget.workMode,
+                style:
+                    TextStyle(fontWeight: FontWeight.w700, color: _ink)),
+          ])),
       if (widget.workMode == 'Work From Home' &&
           widget.workLocation != null) ...[
         const SizedBox(height: 4),
@@ -1515,78 +1653,211 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
           ),
         ),
       ],
+      // ── Attendance Card (IMAGE 2 layout) ────────────────────────────
       _ProfileCard(
-          child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      _pill(
-                          activeBreak != null
-                              ? 'Break in Progress'
-                              : widget.checkedIn
-                                  ? attendanceStatus
-                                  : hasActiveShift
-                                      ? 'Shift Complete'
-                                      : 'Not Checked In',
-                          activeBreak != null
-                              ? const Color(0xfffff3d6)
-                              : widget.checkedIn
-                                  ? attendance?.isLate == true
-                                      ? const Color(0xfffff3d6)
-                                      : const Color(0xffe8f8ef)
-                                  : const Color(0xffffeeee),
-                          activeBreak != null
-                              ? const Color(0xffa66a16)
-                              : widget.checkedIn
-                                  ? attendance?.isLate == true
-                                      ? const Color(0xffa66a16)
-                                      : const Color(0xff198754)
-                                  : const Color(0xffd84747)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                          child: Align(
-                              alignment: Alignment.centerRight,
-                              child: Text('Shift: $shiftText',
-                                  overflow: TextOverflow.ellipsis,
-                                  style:
-                                      TextStyle(fontSize: 11, color: _muted))))
-                    ]),
-                    const SizedBox(height: 16),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final isNarrow = constraints.maxWidth < 600;
+
+            final startBreakButton = OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 10),
+                side: BorderSide(color: _ink.withValues(alpha: 0.25)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: !widget.checkedIn ||
+                      widget.isPunching ||
+                      widget.isLoadingAttendance ||
+                      widget.attendanceError != null ||
+                      _breakActionInFlight
+                  ? null
+                  : activeBreak != null
+                      ? () async {
+                          setState(() => _breakActionInFlight = true);
+                          try {
+                            await widget.onToggleBreak(null);
+                          } finally {
+                            if (mounted)
+                              setState(() => _breakActionInFlight = false);
+                          }
+                        }
+                      : _chooseAndStartBreak,
+              icon: Icon(
+                  activeBreak == null
+                      ? Icons.free_breakfast_outlined
+                      : Icons.stop_circle_outlined,
+                  size: 15,
+                  color: _ink),
+              label: Text(
+                  _breakActionInFlight
+                      ? 'Please wait...'
+                      : activeBreak == null
+                          ? 'Start Break'
+                          : 'End Break',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: _ink,
+                      fontWeight: FontWeight.w500)),
+            );
+
+            final checkOutButton = FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xff0f172a),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed:
+                  (widget.isPunching || widget.isLoadingAttendance)
+                      ? null
+                      : (widget.checkedIn || !hasActiveShift
+                          ? (activeBreak == null
+                              ? widget.onToggle
+                              : null)
+                          : null),
+              icon: widget.isPunching
+                  ? const SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : Icon(
+                      widget.checkedIn
+                          ? Icons.arrow_forward
+                          : Icons.login,
+                      size: 14,
+                      color: Colors.white),
+              label: Text(
+                  widget.isPunching
+                      ? (widget.checkedIn
+                          ? 'Checking out...'
+                          : 'Checking in...')
+                      : (widget.checkedIn
+                          ? 'Check Out'
+                          : hasActiveShift
+                              ? 'Shift Complete'
+                              : 'Check In'),
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600)),
+            );
+
+            final statusPill = _pill(
+                activeBreak != null
+                    ? 'Break in Progress'
+                    : widget.checkedIn
+                        ? attendanceStatus
+                        : hasActiveShift
+                            ? 'Shift Complete'
+                            : 'Not Checked In',
+                activeBreak != null
+                    ? const Color(0xfffff3d6)
+                    : widget.checkedIn
+                        ? attendance?.isLate == true
+                            ? const Color(0xfffff3d6)
+                            : const Color(0xffe8f8ef)
+                        : const Color(0xffffeeee),
+                activeBreak != null
+                    ? const Color(0xffa66a16)
+                    : widget.checkedIn
+                        ? attendance?.isLate == true
+                            ? const Color(0xffa66a16)
+                            : const Color(0xff198754)
+                        : const Color(0xffd84747));
+
+            return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Row 1: Status pill + Shift + right-aligned check-in time
+                  if (isNarrow)
+                    Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          statusPill,
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Text('Shift: $shiftText',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize: 11, color: _muted)))),
+                        ])
+                  else
+                    Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          statusPill,
+                          const SizedBox(width: 10),
+                          Text('Shift: $shiftText',
+                              style: TextStyle(
+                                  fontSize: 12, color: _muted)),
+                          const Spacer(),
+                          if (hasActiveShift &&
+                              widget.checkOutTime == null) ...[
+                            RichText(
+                                text: TextSpan(
+                                    style: TextStyle(
+                                        fontSize: 12, color: _muted),
+                                    children: [
+                                  const TextSpan(
+                                      text: 'Checked in at '),
+                                  TextSpan(
+                                      text: checkInText,
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: _ink)),
+                                ])),
+                          ] else if (widget.checkOutTime != null) ...[
+                            Text(checkOutText,
+                                style: TextStyle(
+                                    fontSize: 12, color: _muted)),
+                          ],
+                        ]),
+                  Divider(height: isNarrow ? 14 : 24),
+                  // Row 2: ACTIVE TIME label + "Working On-Schedule" right
+                  Row(children: [
                     Text('ACTIVE TIME',
                         style: TextStyle(
-                            fontSize: 12, color: _muted, letterSpacing: .5)),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            fontSize: 11,
+                            color: _muted,
+                            letterSpacing: .8,
+                            fontWeight: FontWeight.w600)),
+                    const Spacer(),
+                    if (workingOnSchedule)
+                      Text('Working On-Schedule',
+                          style: TextStyle(fontSize: 12, color: _muted))
+                    else if (widget.isLoadingAttendance)
+                      const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child:
+                              CircularProgressIndicator(strokeWidth: 2)),
+                  ]),
+                  const SizedBox(height: 4),
+                  // Row 3: Large time display
+                  Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(trackedText,
-                                  style: TextStyle(
-                                      fontSize: 28,
-                                      fontWeight: FontWeight.w700,
-                                      color: _ink)),
-                              const SizedBox(width: 5),
-                              Padding(
-                                  padding: const EdgeInsets.only(bottom: 4),
-                                  child: Text('hrs',
-                                      style: TextStyle(
-                                          fontSize: 12, color: _muted)))
-                            ]),
-                        if (widget.isLoadingAttendance)
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 6),
-                            child: SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          ),
-                      ],
-                    ),
+                        Text(trackedText,
+                            style: TextStyle(
+                                fontSize: isNarrow ? 28 : 34,
+                                fontWeight: FontWeight.w800,
+                                color: _ink,
+                                letterSpacing: -0.5)),
+                        const SizedBox(width: 6),
+                        Padding(
+                            padding: const EdgeInsets.only(bottom: 5),
+                            child: Text('hrs',
+                                style: TextStyle(
+                                    fontSize: 13, color: _muted))),
+                      ]),
+                  if (isNarrow) ...[
+                    const SizedBox(height: 2),
                     Text(
                         widget.checkOutTime != null
                             ? checkOutText
@@ -1594,269 +1865,303 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
                                 ? 'Checked in at $checkInText'
                                 : 'Please check in to start your shift',
                         style: TextStyle(fontSize: 12, color: _muted)),
-                    const SizedBox(height: 6),
-                    if (activeBreak != null) ...[
-                      const SizedBox(height: 8),
-                      Text(activeBreak.remainingTimeText(now),
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: _ink)),
-                      const SizedBox(height: 2),
-                      Text(
-                          '${AttendanceBreakSchedule.nameForType(activeBreak.breakType)} · Started ${TimeOfDay.fromDateTime(activeBreak.startTime).format(context)}',
-                          style: TextStyle(fontSize: 12, color: _muted)),
-                    ] else ...[
-                      const SizedBox(height: 8),
-                      Text('Upcoming Break',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: _ink)),
-                      Text(
-                          'Tea Breaks and Lunch Break · Whenever you need them',
-                          style: TextStyle(fontSize: 12, color: _muted)),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: !widget.checkedIn ||
-                                  widget.isPunching ||
-                                  widget.isLoadingAttendance ||
-                                  widget.attendanceError != null ||
-                                  _breakActionInFlight
-                              ? null
-                              : activeBreak != null
-                                  ? () async {
-                                      setState(
-                                          () => _breakActionInFlight = true);
-                                      try {
-                                        await widget.onToggleBreak(null);
-                                      } finally {
-                                        if (mounted)
-                                          setState(() =>
-                                              _breakActionInFlight = false);
-                                      }
-                                    }
-                                  : _chooseAndStartBreak,
-                          icon: Icon(
-                              activeBreak == null
-                                  ? Icons.free_breakfast_outlined
-                                  : Icons.stop_circle_outlined,
-                              size: 15),
-                          label: Text(
-                              _breakActionInFlight
-                                  ? 'Please wait...'
-                                  : activeBreak == null
-                                      ? 'Start Break'
-                                      : 'End Break',
-                              style: const TextStyle(fontSize: 12)),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed:
-                              (widget.isPunching || widget.isLoadingAttendance)
-                                  ? null
-                                  : (widget.checkedIn || !hasActiveShift
-                                      ? (activeBreak == null
-                                          ? widget.onToggle
-                                          : null)
-                                      : null),
-                          icon: widget.isPunching
-                              ? const SizedBox(
-                                  width: 13,
-                                  height: 13,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white),
-                                )
-                              : Icon(
-                                  widget.checkedIn ? Icons.logout : Icons.login,
-                                  size: 13),
-                          label: Text(
-                              widget.isPunching
-                                  ? (widget.checkedIn
-                                      ? 'Checking out...'
-                                      : 'Checking in...')
-                                  : (widget.checkedIn
-                                      ? 'Check Out'
-                                      : hasActiveShift
-                                          ? 'Shift Complete'
-                                          : 'Check In'),
-                              style: const TextStyle(fontSize: 12)),
-                        ),
-                      ),
-                    ]),
-                  ]))),
+                  ] else if (!workingOnSchedule &&
+                      widget.isLoadingAttendance == false &&
+                      !hasActiveShift &&
+                      activeBreak == null) ...[
+                    const SizedBox(height: 2),
+                    Text('Please check in to start your shift',
+                        style: TextStyle(fontSize: 12, color: _muted)),
+                  ],
+                  // Break status text below large time (when on break)
+                  if (activeBreak != null) ...[
+                    const SizedBox(height: 4),
+                    Text(activeBreak.remainingTimeText(now),
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: _ink)),
+                    const SizedBox(height: 2),
+                    Text(
+                        '${AttendanceBreakSchedule.nameForType(activeBreak.breakType)} · Started ${TimeOfDay.fromDateTime(activeBreak.startTime).format(context)}',
+                        style: TextStyle(fontSize: 12, color: _muted)),
+                  ],
+                  Divider(height: isNarrow ? 14 : 24),
+                  // Row 4: Upcoming Break info + buttons
+                  if (isNarrow)
+                    Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                              activeBreak != null
+                                  ? 'Break in Progress'
+                                  : 'Upcoming Break',
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: _ink)),
+                          const SizedBox(height: 2),
+                          Text(
+                              activeBreak != null
+                                  ? '${AttendanceBreakSchedule.nameForType(activeBreak.breakType)} · tap End Break to resume'
+                                  : 'Tea Breaks and Lunch Break · Whenever you need them',
+                              style: TextStyle(
+                                  fontSize: 11, color: _muted)),
+                          const SizedBox(height: 8),
+                          Row(children: [
+                            Expanded(child: startBreakButton),
+                            const SizedBox(width: 8),
+                            Expanded(child: checkOutButton),
+                          ]),
+                        ])
+                  else
+                    Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                              child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                Text(
+                                    activeBreak != null
+                                        ? 'Break in Progress'
+                                        : 'Upcoming Break',
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: _ink)),
+                                const SizedBox(height: 2),
+                                Text(
+                                    activeBreak != null
+                                        ? '${AttendanceBreakSchedule.nameForType(activeBreak.breakType)} · tap End Break to resume'
+                                        : 'Tea Breaks and Lunch Break · Whenever you need them',
+                                    style: TextStyle(
+                                        fontSize: 11, color: _muted)),
+                              ])),
+                          const SizedBox(width: 12),
+                          startBreakButton,
+                          const SizedBox(width: 8),
+                          checkOutButton,
+                        ]),
+                ]);
+          })),
+      // ── Daily Work Update Card ───────────────────────────────────────
       const SizedBox(height: 18),
       _ProfileCard(
-          child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      Expanded(
-                          child: Row(children: [
-                        Icon(Icons.assignment_outlined, size: 15, color: _blue),
-                        const SizedBox(width: 6),
-                        Expanded(
-                            child: Text(
-                                _latestUpdate?.title.isNotEmpty == true
-                                    ? _latestUpdate!.title
-                                    : 'Daily Work Update',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    fontSize: 15,
-                                    color: _ink,
-                                    fontWeight: FontWeight.w700)))
-                      ])),
-                      if (_isLoadingUpdate)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 8),
-                          child: SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      TextButton(
-                          onPressed: _isLoadingUpdate ? null : _editWorkUpdate,
-                          child: Text(
-                              _latestUpdate == null
-                                  ? 'Add Update  ›'
-                                  : 'Edit Update  ›',
-                              style: TextStyle(fontSize: 12, color: _blue)))
-                    ]),
-                    if (_updateError != null) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xffffeeee),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: const Color(0xffd84747)
-                                  .withValues(alpha: 0.3)),
-                        ),
-                        child: Row(children: [
-                          const Icon(Icons.error_outline,
-                              size: 14, color: Color(0xffd84747)),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(_updateError!,
-                                style: const TextStyle(
-                                    fontSize: 11, color: Color(0xffd84747))),
-                          ),
-                          TextButton(
-                            onPressed: _refreshDailyUpdates,
-                            style: TextButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                minimumSize: const Size(40, 24),
-                                tapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap),
-                            child: const Text('Retry',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xffd84747))),
-                          )
-                        ]),
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.insert_drive_file_outlined,
+                      size: 18, color: _ink),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: Text('Daily Work Update',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 16,
+                              color: _ink,
+                              fontWeight: FontWeight.w700))),
+                  if (_isLoadingUpdate)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 8),
+                      child: SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                    ],
-                    const SizedBox(height: 14),
-                    Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                            color: _fieldBg,
-                            borderRadius: BorderRadius.circular(10)),
-                        child: _isLoadingUpdate && _latestUpdate == null
-                            ? const Center(
-                                child: Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 8),
-                                  child: SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  ),
-                                ),
-                              )
-                            : Text(
-                                _latestUpdate?.updateText.isNotEmpty == true
-                                    ? _latestUpdate!.updateText
-                                    : 'No update submitted yet. Tap "Add Update" to submit.',
+                    ),
+                  TextButton(
+                      onPressed:
+                          _isLoadingUpdate ? null : _editWorkUpdate,
+                      style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size(60, 32),
+                          tapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap),
+                      child: Text(
+                          _latestUpdate == null
+                              ? 'Add Update  ›'
+                              : 'Edit Update  ›',
+                          style:
+                              TextStyle(fontSize: 13, color: _ink)))
+                ]),
+                if (_updateError != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xffffeeee),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: const Color(0xffd84747)
+                              .withValues(alpha: 0.3)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.error_outline,
+                          size: 14, color: Color(0xffd84747)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(_updateError!,
+                            style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xffd84747))),
+                      ),
+                      TextButton(
+                        onPressed: _refreshDailyUpdates,
+                        style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(40, 24),
+                            tapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap),
+                        child: const Text('Retry',
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xffd84747))),
+                      )
+                    ]),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                        color: const Color(0xfff8fafc),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: const Color(0xffe2e8f0))),
+                    child: _isLoadingUpdate && _latestUpdate == null
+                        ? const Center(
+                            child: Padding(
+                              padding:
+                                  EdgeInsets.symmetric(vertical: 8),
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                              ),
+                            ),
+                          )
+                        : _latestUpdate == null
+                            ? Text(
+                                'No update submitted yet. Tap \'Add Update\' to submit.',
+                                textAlign: TextAlign.center,
                                 style: TextStyle(
                                     fontSize: 13,
                                     height: 1.45,
-                                    color: _latestUpdate == null
-                                        ? _muted
-                                        : _ink))),
-                    if (_latestUpdate != null) ...[
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        Icon(Icons.check_circle,
-                            color: const Color(0xff24a36a), size: 12),
-                        const SizedBox(width: 4),
-                        Flexible(
-                            child: Text(
-                                _latestUpdate!.createdAt != null
-                                    ? 'Submitted at ${TimeOfDay.fromDateTime(_latestUpdate!.createdAt!).format(context)}'
-                                    : 'Submitted',
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 10, color: _muted))),
-                        const SizedBox(width: 8),
-                        Flexible(
-                            child: Text('✓ Synced',
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 10, color: _muted)))
-                      ]),
-                    ],
-                  ]))),
+                                    color: _muted),
+                              )
+                            : Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  if (_latestUpdate!.title.isNotEmpty) ...[
+                                    Text(
+                                      _latestUpdate!.title,
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: _ink),
+                                    ),
+                                    const SizedBox(height: 6),
+                                  ],
+                                  Text(
+                                    _latestUpdate!.updateText,
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        height: 1.45,
+                                        color: _ink),
+                                  ),
+                                ],
+                              )),
+                if (_latestUpdate != null) ...[
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Icon(Icons.check_circle,
+                        color: const Color(0xff24a36a), size: 12),
+                    const SizedBox(width: 4),
+                    Flexible(
+                        child: Text(
+                            _latestUpdate!.createdAt != null
+                                ? 'Submitted at ${TimeOfDay.fromDateTime(_latestUpdate!.createdAt!).format(context)}'
+                                : 'Submitted',
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                TextStyle(fontSize: 10, color: _muted))),
+                    const SizedBox(width: 8),
+                    Flexible(
+                        child: Text('✓ Synced',
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                TextStyle(fontSize: 10, color: _muted)))
+                  ]),
+                ],
+              ])),
+      // ── Leave Request Update Card ────────────────────────────────────
       if (activeLeave != null) ...[
         const SizedBox(height: 18),
-        _ProfileCard(
-            child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: [
-                        Expanded(
-                            child: Row(children: [
-                          Icon(Icons.event_note_outlined,
-                              size: 13, color: _blue),
-                          const SizedBox(width: 5),
-                          Text('Leave Request Update',
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  color: _ink,
-                                  fontWeight: FontWeight.w700))
-                        ])),
-                        _pill(
-                            activeLeave.status,
-                            _statusBackground(activeLeave.status),
-                            _statusForeground(activeLeave.status)),
-                      ]),
-                      const SizedBox(height: 10),
-                      Text('${activeLeave.type} · ${activeLeave.dates}',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: _ink)),
-                      const SizedBox(height: 5),
-                      Text('Reason: ${activeLeave.reason}',
-                          style: TextStyle(fontSize: 11, color: _ink)),
-                      const SizedBox(height: 5),
-                      Text(activeLeave.message,
-                          style: TextStyle(
-                              fontSize: 12, color: _muted, height: 1.4)),
-                    ]))),
+        Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xffe2e8f0)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2)),
+              ],
+            ),
+            padding: const EdgeInsets.all(20),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Icon(Icons.calendar_today_outlined,
+                        size: 16, color: _muted),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: Text('Leave Request Update',
+                            style: TextStyle(
+                                fontSize: 15,
+                                color: _ink,
+                                fontWeight: FontWeight.w700))),
+                    // Green outlined status badge
+                    Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                            border: Border.all(
+                                color: _statusForeground(activeLeave.status),
+                                width: 1.5),
+                            borderRadius: BorderRadius.circular(20)),
+                        child: Text(activeLeave.status,
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: _statusForeground(
+                                    activeLeave.status)))),
+                  ]),
+                  const SizedBox(height: 10),
+                  Text('${activeLeave.type} · ${activeLeave.dates}',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: _ink)),
+                  const SizedBox(height: 5),
+                  Text('Reason: ${activeLeave.reason}',
+                      style: TextStyle(fontSize: 12, color: _ink)),
+                  const SizedBox(height: 5),
+                  Text(activeLeave.message,
+                      style: TextStyle(
+                          fontSize: 12, color: _muted, height: 1.4)),
+                ])),
       ],
     ]);
   }
@@ -1873,10 +2178,14 @@ class _EditWorkUpdatePage extends StatefulWidget {
     required this.initialTitle,
     required this.initialValue,
     required this.repository,
+    this.staffName,
+    this.department,
   });
   final String initialTitle;
   final String initialValue;
   final HRRepository repository;
+  final String? staffName;
+  final String? department;
 
   @override
   State<_EditWorkUpdatePage> createState() => _EditWorkUpdatePageState();
@@ -1957,127 +2266,461 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) => PopScope(
-        canPop: !_hasChanges && !_isSaving,
-        onPopInvoked: (didPop) {
-          if (!didPop) _handleBack();
-        },
-        child: Scaffold(
-          backgroundColor: _bg,
-          appBar: AppBar(
-            backgroundColor: _surface,
-            surfaceTintColor: _surface,
-            elevation: 0,
-            leading: IconButton(
-                icon: Icon(Icons.arrow_back, color: _ink),
-                onPressed: _isSaving ? null : _handleBack),
-            title: Text('Edit Work Update',
-                style: TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w700, color: _ink)),
-            actions: [
-              TextButton(
-                  onPressed: _isSaving ? null : _handleBack,
-                  child: Text('Cancel', style: TextStyle(color: _blue)))
-            ],
-          ),
-          body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Title',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: _ink)),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _titleController,
-                      enabled: !_isSaving,
-                      style: TextStyle(fontSize: 16, color: _ink),
-                      decoration: _fieldDecoration(hint: 'Enter update title'),
-                    ),
-                    const SizedBox(height: 18),
-                    Text('Details',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: _ink)),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        autofocus: true,
-                        expands: true,
-                        enabled: !_isSaving,
-                        minLines: null,
-                        maxLines: null,
-                        textAlignVertical: TextAlignVertical.top,
-                        style:
-                            TextStyle(fontSize: 14, height: 1.5, color: _ink),
-                        decoration: InputDecoration(
-                          hintText: 'Enter today\'s work update',
-                          filled: true,
-                          fillColor: _fieldBg,
-                          contentPadding: const EdgeInsets.all(14),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: _line)),
-                          enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: _line)),
-                          focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: _blue)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 46,
-                      child: FilledButton(
-                        onPressed: _isSaving ? null : _save,
-                        style: FilledButton.styleFrom(
-                            backgroundColor: _blue,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10))),
-                        child: _isSaving
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text('Save Update',
-                                style: TextStyle(
-                                    fontSize: 14, fontWeight: FontWeight.w600)),
-                      ),
-                    ),
-                  ]),
+  Widget _buildSidebarItem(IconData icon, String label, {required bool isActive}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isActive ? const Color(0xffeff6ff) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        border: isActive ? Border.all(color: const Color(0xffbfdbfe), width: 1.2) : null,
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: isActive ? const Color(0xff2563eb) : const Color(0xff64748b)),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+              color: isActive ? const Color(0xff2563eb) : const Color(0xff64748b),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final displayName = widget.staffName?.isNotEmpty == true
+        ? widget.staffName!
+        : widget.repository.currentUser.value?.name.isNotEmpty == true
+            ? widget.repository.currentUser.value!.name
+            : 'Abu';
+    final deptName = widget.department?.isNotEmpty == true
+        ? widget.department!
+        : widget.repository.currentUser.value?.department.isNotEmpty == true
+            ? widget.repository.currentUser.value!.department
+            : 'Tech';
+    final initialLetter = displayName.isNotEmpty ? displayName[0].toUpperCase() : 'A';
+    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
+
+    final formCard = Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xffdce4ef), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Header Section ─────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(28, 22, 28, 18),
+            child: Row(
+              children: [
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.arrow_back, color: Color(0xff111827), size: 20),
+                  onPressed: _isSaving ? null : _handleBack,
+                ),
+                const SizedBox(width: 14),
+                const Text(
+                  'Edit Work Update',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xff111827),
+                  ),
+                ),
+                const Spacer(),
+                InkWell(
+                  onTap: _isSaving ? null : _handleBack,
+                  borderRadius: BorderRadius.circular(6),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xff111827),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(color: Color(0xffe5eaf2), height: 1, thickness: 1),
+          // ── Form Fields ────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Title
+                const Text(
+                  'Title',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xff172033),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 46,
+                  child: TextField(
+                    controller: _titleController,
+                    enabled: !_isSaving,
+                    style: const TextStyle(fontSize: 14, color: Color(0xff111827)),
+                    decoration: InputDecoration(
+                      hintText: 'Enter update title',
+                      hintStyle: const TextStyle(fontSize: 14, color: Color(0xff94a3b8)),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xff111827), width: 1.2),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Details
+                const Text(
+                  'Details',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xff172033),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 252,
+                  child: TextField(
+                    controller: _controller,
+                    enabled: !_isSaving,
+                    autofocus: true,
+                    maxLines: null,
+                    expands: true,
+                    textAlignVertical: TextAlignVertical.top,
+                    style: const TextStyle(fontSize: 14, height: 1.5, color: Color(0xff111827)),
+                    decoration: InputDecoration(
+                      hintText: "Enter today's work update",
+                      hintStyle: const TextStyle(fontSize: 14, color: Color(0xff94a3b8)),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.all(16),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xff111827), width: 1.2),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 30),
+                // Save Update Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: _isSaving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xff000000),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: _isSaving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text(
+                            'Save Update',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white,
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final desktopBody = Scaffold(
+      backgroundColor: const Color(0xffedf0f5),
+      body: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 1320),
+          margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x0e000000),
+                blurRadius: 28,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.fromLTRB(28, 22, 28, 24),
+          child: Column(
+            children: [
+              // Top Header
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xff0f172a),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.people_alt_rounded, color: Colors.white, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'StaffHub',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xff0f172a),
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const Spacer(),
+                  // Department badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xfff8fafc),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xffe2e8f0)),
+                    ),
+                    child: Text(
+                      deptName.toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xff334155),
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Chat button
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xffe2e8f0)),
+                    ),
+                    child: const Icon(Icons.chat_bubble_outline_rounded, size: 18, color: Color(0xff334155)),
+                  ),
+                  const SizedBox(width: 14),
+                  // Profile chip
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircleAvatar(
+                        radius: 17,
+                        backgroundColor: const Color(0xff0f172a),
+                        child: Text(
+                          initialLetter,
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                displayName,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                              ),
+                              const SizedBox(width: 2),
+                              const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xff64748b)),
+                            ],
+                          ),
+                          Text(
+                            deptName,
+                            style: const TextStyle(fontSize: 11, color: Color(0xff64748b)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              // Body: Sidebar + Edit Work Update Card
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // WORKSPACE Sidebar
+                    Container(
+                      width: 220,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: const Color(0xffe2e8f0), width: 1.2),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                            child: Text(
+                              'WORKSPACE',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                letterSpacing: 1.2,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xff94a3b8),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _buildSidebarItem(Icons.home_outlined, 'Home', isActive: true),
+                          const SizedBox(height: 4),
+                          _buildSidebarItem(Icons.fingerprint_rounded, 'Punch', isActive: false),
+                          const SizedBox(height: 4),
+                          _buildSidebarItem(Icons.calendar_today_outlined, 'Leave', isActive: false),
+                          const SizedBox(height: 4),
+                          _buildSidebarItem(Icons.settings_outlined, 'Settings', isActive: false),
+                          const Spacer(),
+                          // Bottom user card
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xfff8fafc),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 15,
+                                  backgroundColor: const Color(0xffeff6ff),
+                                  child: Text(
+                                    initialLetter,
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      displayName,
+                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                    ),
+                                    Text(
+                                      deptName,
+                                      style: const TextStyle(fontSize: 10, color: Color(0xff64748b)),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    // Main Content Card
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: formCard,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
-      );
+      ),
+    );
+
+    final mobileBody = Scaffold(
+      backgroundColor: const Color(0xffedf0f5),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: formCard,
+        ),
+      ),
+    );
+
+    return PopScope(
+      canPop: !_hasChanges && !_isSaving,
+      onPopInvoked: (didPop) {
+        if (!didPop) _handleBack();
+      },
+      child: isDesktop ? desktopBody : mobileBody,
+    );
+  }
 }
 
 class _PunchPage extends StatefulWidget {
-  const _PunchPage(
-      {required this.checkedIn,
-      required this.checkInTime,
-      required this.checkOutTime,
-      required this.onToggle,
-      required this.attendance,
-      required this.onToggleBreak,
-      required this.attendanceRecords,
-      this.isPunching = false,
-      this.repository,
-      this.department,
-      this.workMode});
+  const _PunchPage({
+    required this.checkedIn,
+    required this.checkInTime,
+    required this.checkOutTime,
+    required this.onToggle,
+    required this.attendance,
+    required this.onToggleBreak,
+    required this.attendanceRecords,
+    this.isPunching = false,
+    this.repository,
+    this.department,
+    this.workMode,
+    this.staff,
+  });
   final bool checkedIn;
   final DateTime checkInTime;
   final DateTime? checkOutTime;
@@ -2089,6 +2732,7 @@ class _PunchPage extends StatefulWidget {
   final HRRepository? repository;
   final String? department;
   final String? workMode;
+  final Staff? staff;
 
   @override
   State<_PunchPage> createState() => _PunchPageState();
@@ -2992,7 +3636,6 @@ class _AttendanceDetailBottomSheetState
         ),
       );
 }
-
 String _formatDisplayDate(String isoOrDate) {
   final d = DateTime.tryParse(isoOrDate)?.toLocal();
   if (d == null) return isoOrDate;
@@ -3135,6 +3778,7 @@ class _LeavePageState extends State<_LeavePage> {
 
   /// Count calendar days in approved leave requests for the given year/month.
   /// month == null means the whole year.
+  // ignore: unused_element
   int _approvedDays(List<LeaveRequest> requests, int year, {int? month}) {
     int total = 0;
     for (final req in requests) {
@@ -6678,6 +7322,7 @@ Widget _pill(String text, Color bg, Color fg) => Container(
     child: Text(text,
         style:
             TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w600)));
+// ignore: unused_element
 Widget _timeline(IconData icon, String title, String subtitle, String time,
         Color color) =>
     Row(children: [
