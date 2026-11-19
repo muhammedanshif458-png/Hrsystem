@@ -957,68 +957,112 @@ class HRRepositoryImpl implements HRRepository {
   @override
   Future<void> fetchStaffLeaves() async {
     try {
-      final response = await _api.get(ApiConfig.leaves);
-      if (response['success'] == true) {
-        final data = response['data'] as List?;
-        if (data != null) {
-          leaveRequests.value = data.map((e) {
-            final docName = e['documentName'] as String?;
-            final docUrl = e['documentUrl'] as String?;
-            final rawDoc = e['document'];
-            String? docId;
-            String? resolvedDocName = docName;
-            if (rawDoc is Map) {
-              docId = rawDoc['_id']?.toString() ?? rawDoc['id']?.toString();
-              resolvedDocName ??= (rawDoc['originalName'] as String?) ??
-                  (rawDoc['fileName'] as String?);
-            } else if (rawDoc is String && rawDoc.isNotEmpty) {
-              docId = rawDoc;
-            }
-            if (docId == null && e['documentId'] != null) {
-              docId = e['documentId']?.toString();
-            }
-            final rawType = e['leaveType'] as String?;
-            final displayType = e['leaveTypeDisplay'] as String?;
-            final rawStatus = e['status'] as String?;
-            final staffObj = e['staff'] ?? e['employee'];
-            String parsedStaffId = '';
-            if (staffObj is Map) {
-              parsedStaffId = staffObj['_id']?.toString() ??
-                  staffObj['id']?.toString() ??
-                  '';
-            } else if (staffObj is String) {
-              parsedStaffId = staffObj;
-            }
-            if (parsedStaffId.isEmpty && e['staffId'] != null) {
-              parsedStaffId = e['staffId'].toString();
-            }
-            if (parsedStaffId.isEmpty && e['employeeId'] != null) {
-              parsedStaffId = e['employeeId'].toString();
-            }
-            if (parsedStaffId.isEmpty) {
-              parsedStaffId = currentUser.value?.id ?? '';
-            }
-            return LeaveRequest(
-              id: e['_id'] ?? e['id'] ?? '',
-              staffId: parsedStaffId,
-              fromDate: e['startDate'] ?? '',
-              toDate: e['endDate'] ?? '',
-              reason: e['reason'] ?? '',
-              type: _mapBackendLeaveTypeToUi(rawType,
-                  displayType: displayType,
-                  hasDoc: resolvedDocName != null ||
-                      docUrl != null ||
-                      docId != null),
-              status: _mapBackendStatusToUi(rawStatus),
-              documentName: resolvedDocName,
-              documentUrl: docUrl,
-              documentId: docId,
-              createdAt:
-                  DateTime.tryParse(e['createdAt'] ?? '') ?? DateTime.now(),
-            );
-          }).toList();
+      final allLeavesData = <dynamic>[];
+      int currentPage = 1;
+      int totalPages = 1;
+
+      do {
+        final response = await _api.get(
+          ApiConfig.leaves,
+          queryParams: {
+            'page': currentPage,
+            'limit': 100,
+          },
+        );
+        if (response is Map && response['success'] == true) {
+          final data = response['data'] as List?;
+          if (data != null) {
+            allLeavesData.addAll(data);
+          }
+          final pagination = response['pagination'];
+          if (pagination is Map && pagination['totalPages'] is num) {
+            totalPages = (pagination['totalPages'] as num).toInt();
+          } else {
+            totalPages = 1;
+          }
+        } else if (response is List) {
+          allLeavesData.addAll(response);
+          totalPages = 1;
+        } else {
+          break;
         }
-      }
+        currentPage++;
+      } while (currentPage <= totalPages);
+
+      leaveRequests.value = allLeavesData.map((e) {
+        if (e is! Map) return null;
+        final docName = e['documentName'] as String?;
+        final docUrl = e['documentUrl'] as String?;
+        final rawDoc = e['document'];
+        String? docId;
+        String? resolvedDocName = docName;
+        if (rawDoc is Map) {
+          docId = rawDoc['_id']?.toString() ?? rawDoc['id']?.toString();
+          resolvedDocName ??= (rawDoc['originalName'] as String?) ??
+              (rawDoc['fileName'] as String?);
+        } else if (rawDoc is String && rawDoc.isNotEmpty) {
+          docId = rawDoc;
+        }
+        if (docId == null && e['documentId'] != null) {
+          docId = e['documentId']?.toString();
+        }
+        final rawType = e['leaveType'] as String?;
+        final displayType = e['leaveTypeDisplay'] as String?;
+        final rawStatus = e['status'] as String?;
+        final staffObj = e['staff'] ?? e['employee'];
+        String parsedStaffId = '';
+        if (staffObj is Map) {
+          parsedStaffId = staffObj['_id']?.toString() ??
+              staffObj['id']?.toString() ??
+              '';
+        } else if (staffObj is String) {
+          parsedStaffId = staffObj;
+        }
+        if (parsedStaffId.isEmpty && e['staffId'] != null) {
+          parsedStaffId = e['staffId'].toString();
+        }
+        if (parsedStaffId.isEmpty && e['employeeId'] != null) {
+          parsedStaffId = e['employeeId'].toString();
+        }
+        if (parsedStaffId.isEmpty) {
+          parsedStaffId = currentUser.value?.id ?? '';
+        }
+
+        DateTime parsedCreatedAt = DateTime.now();
+        final createdAtRaw = e['createdAt'] ??
+            e['appliedAt'] ??
+            e['submittedDate'] ??
+            e['submissionDate'];
+        if (createdAtRaw != null) {
+          parsedCreatedAt =
+              DateTime.tryParse(createdAtRaw.toString())?.toLocal() ??
+                  DateTime.now();
+        } else if (e['startDate'] != null) {
+          parsedCreatedAt =
+              DateTime.tryParse(e['startDate'].toString())?.toLocal() ??
+                  DateTime.now();
+        }
+
+        return LeaveRequest(
+          id: e['_id']?.toString() ?? e['id']?.toString() ?? '',
+          staffId: parsedStaffId,
+          fromDate: e['startDate']?.toString() ?? '',
+          toDate: e['endDate']?.toString() ?? '',
+          reason: e['reason']?.toString() ?? '',
+          type: _mapBackendLeaveTypeToUi(
+            rawType,
+            displayType: displayType,
+            hasDoc: resolvedDocName != null ||
+                docUrl != null ||
+                docId != null,
+          ),
+          status: _mapBackendStatusToUi(rawStatus),
+          documentName: resolvedDocName,
+          documentUrl: docUrl,
+          documentId: docId,
+          createdAt: parsedCreatedAt,
+        );
+      }).whereType<LeaveRequest>().toList();
     } catch (e) {
       debugPrint('fetchStaffLeaves error: $e');
     }
@@ -1105,8 +1149,15 @@ class HRRepositoryImpl implements HRRepository {
   Future<void> deleteLeaveRequest(String requestId) async {
     try {
       final response = await _api.delete(ApiConfig.leaveById(requestId));
-      if (response['success'] == true) {
+      if (response is Map && response['success'] == true) {
         await fetchStaffLeaves();
+      } else {
+        throw ApiException(
+          statusCode: 400,
+          message: response is Map && response['message'] != null
+              ? response['message'].toString()
+              : 'Failed to cancel leave request.',
+        );
       }
     } catch (e) {
       debugPrint('deleteLeaveRequest error: $e');

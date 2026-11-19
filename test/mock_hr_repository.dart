@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hr_core/models.dart';
 import 'package:hr_core/hr_repository.dart';
+import 'package:hr_core/core/api/api_exception.dart';
 
 class MockHRRepository implements HRRepository {
   @override
@@ -273,6 +274,14 @@ class MockHRRepository implements HRRepository {
 
   @override
   Future<void> deleteLeaveRequest(String requestId) async {
+    final target =
+        leaveRequests.value.where((l) => l.id == requestId).firstOrNull;
+    if (target != null && target.status.toLowerCase() != 'pending') {
+      throw ApiException(
+        statusCode: 400,
+        message: 'Cannot cancel leave request that is already ${target.status}',
+      );
+    }
     leaveRequests.value =
         leaveRequests.value.where((l) => l.id != requestId).toList();
   }

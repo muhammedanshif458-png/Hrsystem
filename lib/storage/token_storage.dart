@@ -9,6 +9,17 @@ class TokenStorage {
   static const String _tokenKey = 'staffhub.auth.token';
   static const String _refreshTokenKey = 'staffhub.auth.refresh_token';
   static const String _workModeKey = 'staffhub.auth.work_mode';
+  static const String _themeModeKey = 'staffhub.theme_mode';
+
+  static Future<void> saveThemeMode(String mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_themeModeKey, mode);
+  }
+
+  static Future<String?> getThemeMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_themeModeKey);
+  }
 
   static Future<void> saveWorkMode(String workMode) async {
     final prefs = await SharedPreferences.getInstance();
@@ -18,6 +29,34 @@ class TokenStorage {
   static Future<String?> getWorkMode() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_workModeKey);
+  }
+
+  // ── Hidden Leave Request IDs per staff member ─────────────────────────────
+  static String _hiddenLeavesKey(String staffId) => 'staffhub.hidden_leaves.$staffId';
+
+  static Future<Set<String>> getHiddenLeaveIds(String staffId) async {
+    if (staffId.isEmpty) return {};
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_hiddenLeavesKey(staffId));
+    return list?.toSet() ?? {};
+  }
+
+  static Future<void> addHiddenLeaveId(String staffId, String leaveId) async {
+    if (staffId.isEmpty || leaveId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final key = _hiddenLeavesKey(staffId);
+    final set = (prefs.getStringList(key) ?? []).toSet();
+    set.add(leaveId);
+    await prefs.setStringList(key, set.toList());
+  }
+
+  static Future<void> removeHiddenLeaveId(String staffId, String leaveId) async {
+    if (staffId.isEmpty || leaveId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final key = _hiddenLeavesKey(staffId);
+    final set = (prefs.getStringList(key) ?? []).toSet();
+    set.remove(leaveId);
+    await prefs.setStringList(key, set.toList());
   }
 
   // ── Save tokens ───────────────────────────────────────────────────────────

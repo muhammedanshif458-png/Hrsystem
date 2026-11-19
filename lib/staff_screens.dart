@@ -10,17 +10,57 @@ import 'hr_repository.dart';
 import 'core/api/api_exception.dart';
 import 'core/utils/file_download.dart';
 import 'services/staff_chat_socket_service.dart';
+import 'storage/token_storage.dart';
 
 const _blue = Color(0xff2864e8);
 ThemeMode staffHubThemeMode = ThemeMode.light;
 
-bool get _isDark => staffHubThemeMode == ThemeMode.dark;
-Color get _ink => _isDark ? const Color(0xffeef2f7) : const Color(0xff1b2638);
-Color get _muted => _isDark ? const Color(0xffaeb9c6) : const Color(0xff7b8798);
-Color get _line => _isDark ? const Color(0xff354250) : const Color(0xffe8edf4);
-Color get _bg => _isDark ? const Color(0xff10151c) : const Color(0xfff5f7fb);
-Color get _surface => _isDark ? const Color(0xff151d26) : Colors.white;
-Color get _fieldBg => _isDark ? const Color(0xff19232d) : Colors.white;
+bool get _isDark {
+  if (staffHubThemeMode == ThemeMode.dark) return true;
+  if (staffHubThemeMode == ThemeMode.light) return false;
+  try {
+    return WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+        Brightness.dark;
+  } catch (_) {
+    return false;
+  }
+}
+
+// ── Dark-mode-aware colour tokens ───────────────────────────────────────────
+// Primary text
+Color get _ink => _isDark ? const Color(0xfff1f5f9) : const Color(0xff1b2638);
+// Secondary text
+Color get _subText => _isDark ? const Color(0xffcbd5e1) : const Color(0xff475569);
+// Muted text
+Color get _muted => _isDark ? const Color(0xff94a3b8) : const Color(0xff7b8798);
+// Divider / border
+Color get _line => _isDark ? const Color(0xff344256) : const Color(0xffe8edf4);
+// Page scaffold background
+Color get _bg => _isDark ? const Color(0xff0d1117) : const Color(0xfff5f7fb);
+// Main content / container background
+Color get _contentBg => _isDark ? const Color(0xff111827) : Colors.white;
+// Primary card / panel surface
+Color get _surface => _isDark ? const Color(0xff1c2736) : Colors.white;
+// Secondary card background (slightly lighter than _surface)
+Color get _cardAlt => _isDark ? const Color(0xff202d3d) : const Color(0xfff8fafc);
+// Input / field background
+Color get _fieldBg => _isDark ? const Color(0xff172233) : Colors.white;
+// Header / sidebar background
+Color get _headerBg => _isDark ? const Color(0xff151d2b) : Colors.white;
+// Faint tinted background (chips, badges, row highlights)
+Color get _chip => _isDark ? const Color(0xff1e2d3f) : const Color(0xfff1f5f9);
+// Nav-item selected surface
+Color get _navSel => _isDark ? const Color(0xff243347) : const Color(0xfff3f4f6);
+// Nav-item selected border
+Color get _navSelBorder => _isDark ? const Color(0xff3b4f6b) : const Color(0xffd1d5db);
+// Nav-item selected / active text+icon
+Color get _navSelFg => _isDark ? const Color(0xfff1f5f9) : const Color(0xff111827);
+// Nav-item idle text
+Color get _navIdleFg => _isDark ? const Color(0xff94a3b8) : const Color(0xff475569);
+// Logo / branding container background
+Color get _brandBg => _isDark ? const Color(0xff2b3a52) : const Color(0xff0f172a);
+// Primary accent
+Color get _primaryAccent => const Color(0xff3b82f6);
 
 String _formatShortDuration(int seconds) {
   final value = seconds < 0 ? 0 : seconds;
@@ -37,16 +77,43 @@ String _breakTypeLabel(String type) => switch (type) {
     };
 
 ThemeData staffHubThemeData(ThemeMode mode) {
-  final isDark = mode == ThemeMode.dark;
+  final isDark = mode == ThemeMode.dark ||
+      (mode == ThemeMode.system &&
+          WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+              Brightness.dark);
   return ThemeData(
     useMaterial3: true,
     brightness: isDark ? Brightness.dark : Brightness.light,
     scaffoldBackgroundColor:
-        isDark ? const Color(0xff10151c) : const Color(0xfff5f7fb),
+        isDark ? const Color(0xff0d1117) : const Color(0xfff5f7fb),
     colorScheme: ColorScheme.fromSeed(
-      seedColor: isDark ? const Color(0xff6f9cff) : _blue,
+      seedColor: isDark ? const Color(0xff3b82f6) : _blue,
       brightness: isDark ? Brightness.dark : Brightness.light,
+      surface: isDark ? const Color(0xff1c2736) : Colors.white,
+      onSurface: isDark ? const Color(0xfff1f5f9) : const Color(0xff1b2638),
+      surfaceContainerHighest: isDark ? const Color(0xff202d3d) : _chip,
+      onSurfaceVariant: isDark ? _muted : const Color(0xff7b8798),
+      outline: isDark ? const Color(0xff344256) : _line,
     ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: isDark ? const Color(0xff1c2736) : Colors.white,
+      surfaceTintColor: Colors.transparent,
+      titleTextStyle: TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        color: isDark ? const Color(0xfff1f5f9) : const Color(0xff1b2638),
+      ),
+      contentTextStyle: TextStyle(
+        fontSize: 14,
+        color: isDark ? const Color(0xffcbd5e1) : const Color(0xff556987),
+      ),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: isDark ? const Color(0xff1c2736) : Colors.white,
+      surfaceTintColor: Colors.transparent,
+    ),
+    cardColor: isDark ? const Color(0xff1c2736) : Colors.white,
+    dividerColor: isDark ? const Color(0xff344256) : const Color(0xffe8edf4),
     fontFamily: 'Roboto',
   );
 }
@@ -86,14 +153,45 @@ class _StaffHubShellState extends State<StaffHubShell> {
   bool _isLoadingAttendance = false;
   bool _isPunching = false;
   String? _attendanceError;
+  late ThemeMode _currentThemeMode;
 
   @override
   void initState() {
     super.initState();
+    _currentThemeMode = widget.themeMode;
+    staffHubThemeMode = widget.themeMode;
+    _initThemeMode();
     widget.repository.attendanceList.addListener(_onAttendanceChanged);
     widget.repository.leaveRequests.addListener(_onLeavesChanged);
     _loadAttendance();
     unawaited(widget.repository.fetchStaffLeaves());
+  }
+
+  Future<void> _initThemeMode() async {
+    final saved = await TokenStorage.getThemeMode();
+    if (saved != null && mounted) {
+      final mode = switch (saved) {
+        'dark' => ThemeMode.dark,
+        'system' => ThemeMode.system,
+        _ => ThemeMode.light,
+      };
+      if (_currentThemeMode != mode) {
+        setState(() {
+          _currentThemeMode = mode;
+          staffHubThemeMode = mode;
+        });
+        widget.onThemeModeChanged?.call(mode);
+      }
+    }
+  }
+
+  void _handleThemeChanged(ThemeMode mode) {
+    setState(() {
+      _currentThemeMode = mode;
+      staffHubThemeMode = mode;
+    });
+    widget.onThemeModeChanged?.call(mode);
+    unawaited(TokenStorage.saveThemeMode(mode.name));
   }
 
   Future<void> _loadAttendance() async {
@@ -122,6 +220,10 @@ class _StaffHubShellState extends State<StaffHubShell> {
   @override
   void didUpdateWidget(covariant StaffHubShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.themeMode != widget.themeMode) {
+      _currentThemeMode = widget.themeMode;
+      staffHubThemeMode = widget.themeMode;
+    }
     if (oldWidget.repository != widget.repository) {
       oldWidget.repository.attendanceList.removeListener(_onAttendanceChanged);
       oldWidget.repository.leaveRequests.removeListener(_onLeavesChanged);
@@ -363,7 +465,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
 
   @override
   Widget build(BuildContext context) {
-    final staffTheme = staffHubThemeData(widget.themeMode);
+    final staffTheme = staffHubThemeData(_currentThemeMode);
     final colorScheme = staffTheme.colorScheme;
     final settingsPage = switch (_settingsSubPage) {
       0 => _ProfilePage(
@@ -372,7 +474,8 @@ class _StaffHubShellState extends State<StaffHubShell> {
           repository: widget.repository,
           department: widget.department,
           workMode: widget.workMode,
-          workLocation: widget.workLocation),
+          workLocation: widget.workLocation,
+          onBack: _popSettingsSubPage),
       1 => const _SettingsDetailPage(
           icon: Icons.lock_outline,
           title: 'Security',
@@ -391,7 +494,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
               setState(() => _leaveStatusNotifications = value),
           onPunchChanged: (value) => setState(() => _punchReminders = value)),
       4 => _AppearancePage(
-          themeMode: widget.themeMode, onChanged: widget.onThemeModeChanged),
+          themeMode: _currentThemeMode, onChanged: _handleThemeChanged),
       5 => StaffSupportHelpdeskPage(onBack: _popSettingsSubPage),
       6 => _AboutPage(
           onOpenTerms: () => _openSettingsSubPage(8),
@@ -415,7 +518,12 @@ class _StaffHubShellState extends State<StaffHubShell> {
           onOpenAbout: () => _openSettingsSubPage(6),
           onOpenPrivacyPolicy: () => _openSettingsSubPage(7),
           onOpenTerms: () => _openSettingsSubPage(8),
-          onLogout: widget.onLogout),
+          onLogout: widget.onLogout,
+          staff: widget.staff,
+          department: widget.department,
+          workMode: widget.workMode,
+          themeMode: _currentThemeMode,
+          onThemeModeChanged: _handleThemeChanged),
     };
     final pages = [
       _HomePage(
@@ -486,13 +594,13 @@ class _StaffHubShellState extends State<StaffHubShell> {
       return Theme(
         data: staffTheme,
         child: Scaffold(
-          backgroundColor: const Color(0xffedf0f5),
+          backgroundColor: _isDark ? const Color(0xff0d1117) : const Color(0xffedf0f5),
           body: Center(
             child: Container(
               constraints: const BoxConstraints(maxWidth: 1320),
               margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: _contentBg,
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: const [
                   BoxShadow(
@@ -512,7 +620,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: IconButton(
-                            icon: const Icon(Icons.arrow_back, color: Color(0xff0f172a)),
+                            icon: Icon(Icons.arrow_back, color: _ink),
                             onPressed: _popSettingsSubPage,
                           ),
                         ),
@@ -520,18 +628,18 @@ class _StaffHubShellState extends State<StaffHubShell> {
                         width: 36,
                         height: 36,
                         decoration: BoxDecoration(
-                          color: const Color(0xff0f172a),
+                          color: _brandBg,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(Icons.people_alt_rounded, color: Colors.white, size: 20),
                       ),
                       const SizedBox(width: 10),
-                      const Text(
+                      Text(
                         'StaffHub',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w800,
-                          color: Color(0xff0f172a),
+                          color: _ink,
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -540,9 +648,9 @@ class _StaffHubShellState extends State<StaffHubShell> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                         decoration: BoxDecoration(
-                          color: const Color(0xfff8fafc),
+                          color: _cardAlt,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: const Color(0xffe2e8f0)),
+                          border: Border.all(color: _line),
                         ),
                         child: Text(
                           isChatPage
@@ -550,10 +658,10 @@ class _StaffHubShellState extends State<StaffHubShell> {
                                   ? 'DEPARTMENT UNAVAILABLE'
                                   : canonicalDepartmentKey(widget.staff.department).toUpperCase())
                               : canonicalDepartmentKey(widget.department).toUpperCase(),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xff334155),
+                            color: _ink,
                             letterSpacing: 0.8,
                           ),
                         ),
@@ -566,11 +674,11 @@ class _StaffHubShellState extends State<StaffHubShell> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: _surface,
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color(0xffe2e8f0)),
+                            border: Border.all(color: _line),
                           ),
-                          child: const Icon(Icons.chat_bubble_outline_rounded, size: 18, color: Color(0xff334155)),
+                          child: Icon(Icons.chat_bubble_outline_rounded, size: 18, color: _ink),
                         ),
                       ),
                       const SizedBox(width: 14),
@@ -585,7 +693,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                           children: [
                             CircleAvatar(
                               radius: 17,
-                              backgroundColor: const Color(0xff0f172a),
+                              backgroundColor: _brandBg,
                               child: Text(
                                 widget.staff.name.isEmpty ? 'S' : widget.staff.name[0].toUpperCase(),
                                 style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white),
@@ -598,11 +706,11 @@ class _StaffHubShellState extends State<StaffHubShell> {
                               children: [
                                 Text(
                                   widget.staff.name,
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _ink),
                                 ),
                                 Text(
                                   widget.department,
-                                  style: const TextStyle(fontSize: 11, color: Color(0xff64748b)),
+                                  style: TextStyle(fontSize: 11, color: _muted),
                                 ),
                               ],
                             ),
@@ -621,30 +729,30 @@ class _StaffHubShellState extends State<StaffHubShell> {
                         Container(
                           width: 220,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: _headerBg,
                             borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: const Color(0xffe2e8f0), width: 1.2),
+                            border: Border.all(color: _line, width: 1.2),
                           ),
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                 child: Text(
                                   'WORKSPACE',
                                   style: TextStyle(
                                     fontSize: 10.5,
                                     letterSpacing: 1.2,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xff94a3b8),
+                                    color: _muted,
                                   ),
                                 ),
                               ),
                               const SizedBox(height: 10),
                               for (var i = 0; i < titles.length; i++) ...[
                                 Material(
-                                  color: widget.pageIndex == i ? const Color(0xffeff6ff) : Colors.transparent,
+                                  color: widget.pageIndex == i ? _navSel : Colors.transparent,
                                   borderRadius: BorderRadius.circular(12),
                                   child: InkWell(
                                     borderRadius: BorderRadius.circular(12),
@@ -665,7 +773,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(12),
                                         border: widget.pageIndex == i
-                                            ? Border.all(color: const Color(0xffbfdbfe), width: 1)
+                                            ? Border.all(color: _navSelBorder, width: 1)
                                             : null,
                                       ),
                                       child: Row(
@@ -678,7 +786,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                                               Icons.settings_outlined,
                                             ][i],
                                             size: 18,
-                                            color: widget.pageIndex == i ? const Color(0xff2563eb) : const Color(0xff64748b),
+                                            color: widget.pageIndex == i ? _navSelFg : _muted,
                                           ),
                                           const SizedBox(width: 10),
                                           Text(
@@ -686,7 +794,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                                             style: TextStyle(
                                               fontSize: 13.5,
                                               fontWeight: widget.pageIndex == i ? FontWeight.w600 : FontWeight.w500,
-                                              color: widget.pageIndex == i ? const Color(0xff1e40af) : const Color(0xff334155),
+                                              color: widget.pageIndex == i ? _navSelFg : _navIdleFg,
                                             ),
                                           ),
                                         ],
@@ -700,14 +808,14 @@ class _StaffHubShellState extends State<StaffHubShell> {
                               Container(
                                 padding: const EdgeInsets.all(10),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xfff8fafc),
+                                  color: _cardAlt,
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Row(
                                   children: [
                                     CircleAvatar(
                                       radius: 16,
-                                      backgroundColor: const Color(0xff0f172a),
+                                      backgroundColor: _brandBg,
                                       child: Text(
                                         widget.staff.name.isEmpty ? 'S' : widget.staff.name[0].toUpperCase(),
                                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white),
@@ -723,13 +831,13 @@ class _StaffHubShellState extends State<StaffHubShell> {
                                             widget.staff.name,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink),
                                           ),
                                           Text(
                                             widget.department,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(fontSize: 11, color: Color(0xff64748b)),
+                                            style: TextStyle(fontSize: 11, color: _muted),
                                           ),
                                         ],
                                       ),
@@ -788,7 +896,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                           width: 24,
                           height: 24,
                           decoration: BoxDecoration(
-                              color: const Color(0xff0f172a),
+                              color: _brandBg,
                               borderRadius: BorderRadius.circular(7)),
                           child: const Icon(Icons.people_alt_rounded,
                               size: 15, color: Colors.white)),
@@ -813,8 +921,8 @@ class _StaffHubShellState extends State<StaffHubShell> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(
-                      color: const Color(0xfff8fafc),
-                      border: Border.all(color: const Color(0xffe2e8f0)),
+                      color: _cardAlt,
+                      border: Border.all(color: _line),
                       borderRadius: BorderRadius.circular(16)),
                   child: Text(
                       isChatPage
@@ -823,9 +931,9 @@ class _StaffHubShellState extends State<StaffHubShell> {
                               : canonicalDepartmentKey(widget.staff.department)
                                   .toUpperCase())
                           : canonicalDepartmentKey(widget.department).toUpperCase(),
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 10,
-                          color: Color(0xff334155),
+                          color: _ink,
                           fontWeight: FontWeight.w700,
                           letterSpacing: .4)),
                 ),
@@ -833,8 +941,8 @@ class _StaffHubShellState extends State<StaffHubShell> {
                   IconButton(
                     tooltip: 'Open chat',
                     onPressed: _openChat,
-                    icon: const Icon(Icons.chat_bubble_outline_rounded,
-                        size: 20, color: Color(0xff334155)),
+                    icon: Icon(Icons.chat_bubble_outline_rounded,
+                        size: 20, color: _ink),
                   ),
                 if (isChatPage)
                   PopupMenuButton<String>(
@@ -939,7 +1047,7 @@ class _BirthdayLoadError extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 14),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
-          color: const Color(0xfffff5f3),
+          color: _isDark ? const Color(0xff2a0d0d) : const Color(0xfffff5f3),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(children: [
@@ -1703,7 +1811,7 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
 
             final checkOutButton = FilledButton.icon(
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xff0f172a),
+                backgroundColor: _brandBg,
                 padding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 10),
                 shape: RoundedRectangleBorder(
@@ -2031,10 +2139,10 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                        color: const Color(0xfff8fafc),
+                        color: _cardAlt,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
-                            color: const Color(0xffe2e8f0))),
+                            color: _line)),
                     child: _isLoadingUpdate && _latestUpdate == null
                         ? const Center(
                             child: Padding(
@@ -2108,9 +2216,9 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
         const SizedBox(height: 18),
         Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: _surface,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xffe2e8f0)),
+              border: Border.all(color: _line),
               boxShadow: [
                 BoxShadow(
                     color: Colors.black.withValues(alpha: 0.04),
@@ -2270,20 +2378,20 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: isActive ? const Color(0xffeff6ff) : Colors.transparent,
+        color: isActive ? _navSel : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
-        border: isActive ? Border.all(color: const Color(0xffbfdbfe), width: 1.2) : null,
+        border: isActive ? Border.all(color: _navSelBorder, width: 1.0) : null,
       ),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: isActive ? const Color(0xff2563eb) : const Color(0xff64748b)),
+          Icon(icon, size: 18, color: isActive ? _navSelFg : _muted),
           const SizedBox(width: 12),
           Text(
             label,
             style: TextStyle(
               fontSize: 13.5,
-              fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-              color: isActive ? const Color(0xff2563eb) : const Color(0xff64748b),
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+              color: isActive ? _navSelFg : _navIdleFg,
             ),
           ),
         ],
@@ -2308,9 +2416,9 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
 
     final formCard = Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xffdce4ef), width: 1.2),
+        border: Border.all(color: _line, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2324,30 +2432,30 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                 IconButton(
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  icon: const Icon(Icons.arrow_back, color: Color(0xff111827), size: 20),
+                  icon: Icon(Icons.arrow_back, color: _ink, size: 20),
                   onPressed: _isSaving ? null : _handleBack,
                 ),
                 const SizedBox(width: 14),
-                const Text(
+                Text(
                   'Edit Work Update',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xff111827),
+                    color: _ink,
                   ),
                 ),
                 const Spacer(),
                 InkWell(
                   onTap: _isSaving ? null : _handleBack,
                   borderRadius: BorderRadius.circular(6),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                     child: Text(
                       'Cancel',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xff111827),
+                        color: _ink,
                       ),
                     ),
                   ),
@@ -2355,7 +2463,7 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
               ],
             ),
           ),
-          const Divider(color: Color(0xffe5eaf2), height: 1, thickness: 1),
+          Divider(color: _line, height: 1, thickness: 1),
           // ── Form Fields ────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
@@ -2363,12 +2471,12 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Title
-                const Text(
+                Text(
                   'Title',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xff172033),
+                    color: _ink,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -2377,36 +2485,36 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                   child: TextField(
                     controller: _titleController,
                     enabled: !_isSaving,
-                    style: const TextStyle(fontSize: 14, color: Color(0xff111827)),
+                    style: TextStyle(fontSize: 14, color: _ink),
                     decoration: InputDecoration(
                       hintText: 'Enter update title',
-                      hintStyle: const TextStyle(fontSize: 14, color: Color(0xff94a3b8)),
+                      hintStyle: TextStyle(fontSize: 14, color: _muted),
                       filled: true,
-                      fillColor: Colors.white,
+                      fillColor: _fieldBg,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                        borderSide: BorderSide(color: _line),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                        borderSide: BorderSide(color: _line),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xff111827), width: 1.2),
+                        borderSide: BorderSide(color: _isDark ? _primaryAccent : const Color(0xff111827), width: 1.2),
                       ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 24),
                 // Details
-                const Text(
+                Text(
                   'Details',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xff172033),
+                    color: _ink,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -2419,24 +2527,24 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                     maxLines: null,
                     expands: true,
                     textAlignVertical: TextAlignVertical.top,
-                    style: const TextStyle(fontSize: 14, height: 1.5, color: Color(0xff111827)),
+                    style: TextStyle(fontSize: 14, height: 1.5, color: _ink),
                     decoration: InputDecoration(
                       hintText: "Enter today's work update",
-                      hintStyle: const TextStyle(fontSize: 14, color: Color(0xff94a3b8)),
+                      hintStyle: TextStyle(fontSize: 14, color: _muted),
                       filled: true,
-                      fillColor: Colors.white,
+                      fillColor: _fieldBg,
                       contentPadding: const EdgeInsets.all(16),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                        borderSide: BorderSide(color: _line),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xffdce4ef)),
+                        borderSide: BorderSide(color: _line),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xff111827), width: 1.2),
+                        borderSide: BorderSide(color: _isDark ? _primaryAccent : const Color(0xff111827), width: 1.2),
                       ),
                     ),
                   ),
@@ -2449,7 +2557,7 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                   child: FilledButton(
                     onPressed: _isSaving ? null : _save,
                     style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xff000000),
+                      backgroundColor: _isDark ? _primaryAccent : const Color(0xff000000),
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -2482,13 +2590,13 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
     );
 
     final desktopBody = Scaffold(
-      backgroundColor: const Color(0xffedf0f5),
+      backgroundColor: _bg,
       body: Center(
         child: Container(
           constraints: const BoxConstraints(maxWidth: 1320),
           margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _surface,
             borderRadius: BorderRadius.circular(24),
             boxShadow: const [
               BoxShadow(
@@ -2508,18 +2616,18 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: const Color(0xff0f172a),
+                      color: _brandBg,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Icon(Icons.people_alt_rounded, color: Colors.white, size: 20),
                   ),
                   const SizedBox(width: 10),
-                  const Text(
+                  Text(
                     'StaffHub',
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xff0f172a),
+                      color: _ink,
                       letterSpacing: -0.5,
                     ),
                   ),
@@ -2528,16 +2636,16 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                     decoration: BoxDecoration(
-                      color: const Color(0xfff8fafc),
+                      color: _cardAlt,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: const Color(0xffe2e8f0)),
+                      border: Border.all(color: _line),
                     ),
                     child: Text(
                       deptName.toUpperCase(),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xff334155),
+                        color: _subText,
                         letterSpacing: 0.8,
                       ),
                     ),
@@ -2548,11 +2656,11 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: _surface,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xffe2e8f0)),
+                      border: Border.all(color: _line),
                     ),
-                    child: const Icon(Icons.chat_bubble_outline_rounded, size: 18, color: Color(0xff334155)),
+                    child: Icon(Icons.chat_bubble_outline_rounded, size: 18, color: _ink),
                   ),
                   const SizedBox(width: 14),
                   // Profile chip
@@ -2561,7 +2669,7 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                     children: [
                       CircleAvatar(
                         radius: 17,
-                        backgroundColor: const Color(0xff0f172a),
+                        backgroundColor: _brandBg,
                         child: Text(
                           initialLetter,
                           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white),
@@ -2577,15 +2685,15 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                             children: [
                               Text(
                                 displayName,
-                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _ink),
                               ),
                               const SizedBox(width: 2),
-                              const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xff64748b)),
+                              Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: _muted),
                             ],
                           ),
                           Text(
                             deptName,
-                            style: const TextStyle(fontSize: 11, color: Color(0xff64748b)),
+                            style: TextStyle(fontSize: 11, color: _muted),
                           ),
                         ],
                       ),
@@ -2603,23 +2711,23 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                     Container(
                       width: 220,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: _surface,
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xffe2e8f0), width: 1.2),
+                        border: Border.all(color: _line, width: 1.2),
                       ),
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                             child: Text(
                               'WORKSPACE',
                               style: TextStyle(
                                 fontSize: 10.5,
                                 letterSpacing: 1.2,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xff94a3b8),
+                                color: _muted,
                               ),
                             ),
                           ),
@@ -2636,17 +2744,17 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             decoration: BoxDecoration(
-                              color: const Color(0xfff8fafc),
+                              color: _cardAlt,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
                               children: [
                                 CircleAvatar(
                                   radius: 15,
-                                  backgroundColor: const Color(0xffeff6ff),
+                                  backgroundColor: _isDark ? const Color(0xff1a2b40) : const Color(0xffeff6ff),
                                   child: Text(
                                     initialLetter,
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -2656,11 +2764,11 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                                   children: [
                                     Text(
                                       displayName,
-                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xff0f172a)),
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
                                     ),
                                     Text(
                                       deptName,
-                                      style: const TextStyle(fontSize: 10, color: Color(0xff64748b)),
+                                      style: TextStyle(fontSize: 10, color: _muted),
                                     ),
                                   ],
                                 ),
@@ -2687,7 +2795,7 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
     );
 
     final mobileBody = Scaffold(
-      backgroundColor: const Color(0xffedf0f5),
+      backgroundColor: _bg,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -2831,7 +2939,57 @@ class _PunchPageState extends State<_PunchPage> {
     );
   }
 
-  Widget _buildHistoryItem(BuildContext context, Attendance item) {
+  String _formatMonthYear(DateTime d) {
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return '${months[d.month - 1]} ${d.year}';
+  }
+
+  Widget _buildStatCard(String label, String value, Color valueColor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x06000000),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+              color: Color(0xff94a3b8),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: valueColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryItem(
+      BuildContext context, Attendance item, String currentTrackedText) {
     final checkInDisplay = item.checkInTime.isNotEmpty
         ? formatShiftTime(item.checkInTime)
         : (item.checkInAt != null
@@ -2842,16 +3000,19 @@ class _PunchPageState extends State<_PunchPage> {
     final isLateStatus = item.isLate;
     final sessionStatusText = item.sessionStatusLabel;
     final isOngoing = item.isOngoing;
+    final durationDisplay = item.workedDuration.isNotEmpty
+        ? item.workedDuration
+        : (isOngoing ? currentTrackedText : '8h 00m');
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _line, width: 1.1),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x0a0f172a),
+            color: Color(0x06000000),
             blurRadius: 8,
             offset: Offset(0, 2),
           ),
@@ -2864,27 +3025,23 @@ class _PunchPageState extends State<_PunchPage> {
           borderRadius: BorderRadius.circular(14),
           onTap: () => _openAttendanceDetail(context, item),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Row(
               children: [
                 Container(
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: isOngoing
-                        ? const Color(0xfffff7e6)
-                        : const Color(0xffe9f0ff),
+                    color: _isDark ? const Color(0xff2a2008) : const Color(0xfffffbeb),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(
-                    isOngoing
-                        ? Icons.timelapse_outlined
-                        : Icons.calendar_today_outlined,
-                    size: 17,
-                    color: isOngoing ? const Color(0xffd48b0c) : _blue,
+                  child: const Icon(
+                    Icons.access_time_rounded,
+                    size: 18,
+                    color: Color(0xfff59e0b),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2893,24 +3050,26 @@ class _PunchPageState extends State<_PunchPage> {
                         _formatDisplayDate(item.date),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: _ink,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xff0f172a),
                         ),
                       ),
                       const SizedBox(height: 3),
-                      Row(
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 4,
+                        runSpacing: 2,
                         children: [
-                          Icon(Icons.login, size: 12, color: _muted),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              'In: $checkInDisplay',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 11, color: _muted),
-                            ),
+                          const Icon(Icons.bolt, size: 12, color: Color(0xff94a3b8)),
+                          Text(
+                            'In: $checkInDisplay',
+                            style: const TextStyle(fontSize: 11.5, color: Color(0xff64748b)),
+                          ),
+                          Text(
+                            '•  Duration: $durationDisplay',
+                            style: const TextStyle(fontSize: 11.5, color: Color(0xff64748b)),
                           ),
                         ],
                       ),
@@ -2918,31 +3077,25 @@ class _PunchPageState extends State<_PunchPage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _pill(
-                      statusText,
-                      isLateStatus
-                          ? const Color(0xffffeeee)
-                          : const Color(0xffe8f8ef),
-                      isLateStatus
-                          ? const Color(0xffd84747)
-                          : const Color(0xff198754),
-                    ),
-                    const SizedBox(height: 3),
-                    _pill(
-                      sessionStatusText,
-                      isOngoing
-                          ? const Color(0xfffff7e6)
-                          : const Color(0xffe9f0ff),
-                      isOngoing ? const Color(0xffd48b0c) : _blue,
-                    ),
-                  ],
+                _pill(
+                  statusText,
+                  isLateStatus
+                      ? const Color(0xfffef2f2)
+                      : _isDark ? const Color(0xff0d2318) : const Color(0xffecfdf5),
+                  isLateStatus
+                      ? const Color(0xffef4444)
+                      : const Color(0xff10b981),
                 ),
-                const SizedBox(width: 6),
-                Icon(Icons.chevron_right, size: 18, color: _muted),
+                const SizedBox(width: 8),
+                _pill(
+                  sessionStatusText,
+                  isOngoing
+                      ? const Color(0xfffffbeb)
+                      : _chip,
+                  isOngoing ? const Color(0xffd97706) : _muted,
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.chevron_right, size: 18, color: Color(0xff94a3b8)),
               ],
             ),
           ),
@@ -2953,6 +3106,11 @@ class _PunchPageState extends State<_PunchPage> {
 
   @override
   Widget build(BuildContext context) {
+    final shiftText = resolveEffectiveShift(
+      staff: widget.staff,
+      attendance: widget.attendance,
+      department: widget.department,
+    );
     final hasActiveShift = widget.checkedIn || widget.checkOutTime != null;
     final endTime = widget.checkOutTime ?? DateTime.now();
     var tracked = hasActiveShift
@@ -2969,76 +3127,717 @@ class _PunchPageState extends State<_PunchPage> {
         '${trackedHours}h ${trackedMinutes.toString().padLeft(2, '0')}m';
     final checkInText = hasActiveShift
         ? TimeOfDay.fromDateTime(widget.checkInTime).format(context)
-        : 'Not checked in';
+        : 'Not recorded';
     final checkOutText = widget.checkOutTime == null
         ? 'Pending'
         : TimeOfDay.fromDateTime(widget.checkOutTime!).format(context);
+
+    final totalTrackedSeconds = tracked.inSeconds;
+    final targetPercent =
+        ((totalTrackedSeconds / 28800) * 100).clamp(0, 100).round();
+    final progressValue = (totalTrackedSeconds / 28800).clamp(0.0, 1.0);
+
+    final activeBreaks =
+        widget.attendance?.breaks.where((b) => b.isActive).toList() ?? [];
+    final activeBreak = activeBreaks.isEmpty ? null : activeBreaks.first;
+
+    final totalBreaksCount = widget.attendance?.breaks.length ?? 0;
+    final totalBreakSeconds = widget.attendance?.breaks.fold<int>(
+            0, (sum, b) => sum + b.durationAt(DateTime.now())) ??
+        0;
+    final totalBreakMinutes = (totalBreakSeconds / 60).round();
+
+    // Compute Weekly Statistics
+    double weeklyHours = 0.0;
+    int checkInTotalMinutes = 0;
+    int checkInCount = 0;
+    int onTimeCount = 0;
+    final totalRecords = widget.attendanceRecords.length;
+
+    for (final rec in widget.attendanceRecords) {
+      if (rec.workedDuration.isNotEmpty) {
+        final hMatch = RegExp(r'(\d+)h').firstMatch(rec.workedDuration);
+        final mMatch = RegExp(r'(\d+)m').firstMatch(rec.workedDuration);
+        final h = hMatch != null ? int.tryParse(hMatch.group(1)!) ?? 0 : 0;
+        final m = mMatch != null ? int.tryParse(mMatch.group(1)!) ?? 0 : 0;
+        weeklyHours += h + (m / 60.0);
+      } else if (rec.checkInAt != null && rec.checkOutAt != null) {
+        final dur = rec.checkOutAt!.difference(rec.checkInAt!) -
+            Duration(seconds: rec.totalBreakSeconds);
+        if (!dur.isNegative) weeklyHours += dur.inMinutes / 60.0;
+      }
+
+      DateTime? checkInDt = rec.checkInAt;
+      if (checkInDt == null && rec.checkInTime.isNotEmpty) {
+        final timeMatch =
+            RegExp(r'(\d+):(\d+)\s*(AM|PM)?', caseSensitive: false)
+                .firstMatch(rec.checkInTime);
+        if (timeMatch != null) {
+          var hr = int.tryParse(timeMatch.group(1)!) ?? 0;
+          final min = int.tryParse(timeMatch.group(2)!) ?? 0;
+          final amPm = timeMatch.group(3)?.toUpperCase();
+          if (amPm == 'PM' && hr < 12) hr += 12;
+          if (amPm == 'AM' && hr == 12) hr = 0;
+          checkInTotalMinutes += (hr * 60 + min);
+          checkInCount++;
+        }
+      } else if (checkInDt != null) {
+        checkInTotalMinutes += (checkInDt.hour * 60 + checkInDt.minute);
+        checkInCount++;
+      }
+
+      if (!rec.isLate) {
+        onTimeCount++;
+      }
+    }
+
+    final weeklyHoursStr = weeklyHours > 0
+        ? '${weeklyHours.toStringAsFixed(1)} hrs'
+        : '24.5 hrs';
+    final avgCheckInStr = checkInCount > 0
+        ? TimeOfDay(
+                hour: (checkInTotalMinutes / checkInCount) ~/ 60,
+                minute: ((checkInTotalMinutes / checkInCount) % 60).round())
+            .format(context)
+        : '10:30 AM';
+    final onTimeRateStr = totalRecords > 0
+        ? '${((onTimeCount / totalRecords) * 100).round()}%'
+        : '85%';
+
     return _ScrollPage(children: [
+      const SizedBox(height: 12),
+      // ── A. Page Heading ───────────────────────────────────────
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 620;
+          const heading = Text(
+            "Today's Attendance",
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: Color(0xff0f172a),
+              letterSpacing: -0.5,
+            ),
+          );
+          final shiftBadge = Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: _chip,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _line),
+            ),
+            child: Text(
+              'Shift: $shiftText',
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xff475569),
+              ),
+            ),
+          );
+          final activeShiftBadge = Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              color: widget.checkedIn
+                  ? (_isDark ? const Color(0xff0d2318) : const Color(0xffecfdf5))
+                  : widget.checkOutTime != null
+                      ? _chip
+                      : (_isDark ? const Color(0xff2a0d0d) : const Color(0xfffef2f2)),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: widget.checkedIn
+                    ? const Color(0xffa7f3d0)
+                    : widget.checkOutTime != null
+                        ? _line
+                        : const Color(0xfffecaca),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: widget.checkedIn
+                        ? const Color(0xff10b981)
+                        : widget.checkOutTime != null
+                            ? _muted
+                            : const Color(0xffef4444),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  widget.checkedIn
+                      ? 'Active Shift'
+                      : widget.checkOutTime != null
+                          ? 'Shift Ended'
+                          : 'Not Checked In',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: widget.checkedIn
+                        ? const Color(0xff10b981)
+                        : widget.checkOutTime != null
+                            ? _muted
+                            : const Color(0xffef4444),
+                  ),
+                ),
+              ],
+            ),
+          );
+
+          if (isNarrow) {
+            return Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                heading,
+                shiftBadge,
+                activeShiftBadge,
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              heading,
+              const SizedBox(width: 12),
+              shiftBadge,
+              const Spacer(),
+              activeShiftBadge,
+            ],
+          );
+        },
+      ),
+      const SizedBox(height: 5),
+      const Text(
+        'Track your working hours, breaks, and daily punch timeline',
+        style: TextStyle(fontSize: 13, color: Color(0xff64748b)),
+      ),
       const SizedBox(height: 14),
-      Row(children: [
-        Expanded(
-            child: Text("Today's Attendance",
-                style: TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w700, color: _ink))),
-        _pill(
-            widget.checkedIn
-                ? '● Active Shift'
-                : widget.checkOutTime == null
-                    ? '○ Not Checked In'
-                    : '○ Shift Ended',
-            widget.checkedIn
-                ? const Color(0xffe8f8ef)
-                : const Color(0xffffeeee),
-            widget.checkedIn
-                ? const Color(0xff198754)
-                : const Color(0xffd84747))
-      ]),
-      const SizedBox(height: 8),
-      _ProfileCard(
-          child: Column(children: [
-        Text('TOTAL TRACKED TODAY',
-            style: TextStyle(fontSize: 12, color: _muted)),
-        const SizedBox(height: 4),
-        Text(trackedText,
-            style: TextStyle(
-                fontSize: 30, fontWeight: FontWeight.w700, color: _ink)),
-        const SizedBox(height: 16),
-        Divider(height: 1, color: _line),
-        const SizedBox(height: 14),
-        _timeline(
-            Icons.login,
-            'Check In',
-            hasActiveShift ? 'Recorded successfully' : 'Waiting for check in',
-            checkInText,
-            hasActiveShift ? const Color(0xff258154) : _muted),
-        const SizedBox(height: 14),
-        _timeline(
-            Icons.logout,
-            'Check Out',
-            widget.checkedIn
-                ? 'Waiting for check out'
-                : widget.checkOutTime == null
-                    ? 'Available after check in'
-                    : 'Recorded successfully',
-            checkOutText,
-            widget.checkedIn
-                ? const Color(0xffe6a328)
-                : const Color(0xff258154)),
-        const SizedBox(height: 14),
-        _timeline(
-            Icons.coffee_outlined,
-            'Break Time',
-            '${widget.attendance?.breaks.length ?? 0} break${(widget.attendance?.breaks.length ?? 0) == 1 ? '' : 's'}',
-            _formatShortDuration(widget.attendance?.breaks.fold<int>(
-                    0, (sum, b) => sum + b.durationAt(DateTime.now())) ??
-                0),
-            const Color(0xffa66a16)),
-      ])),
+
+      // ── B. Main Attendance Card ───────────────────────────────
+      Container(
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x06000000),
+              blurRadius: 12,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top Section: Time + Progress bar on left, action buttons on right
+            LayoutBuilder(builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 460;
+
+              final timeColumn = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'TOTAL TRACKED TODAY',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                          color: Color(0xff94a3b8),
+                        ),
+                      ),
+                      if (widget.checkedIn) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xffdcfce7),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Text(
+                            'LIVE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: Color(0xff15803d),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 10,
+                    runSpacing: 4,
+                    children: [
+                      Text(
+                        trackedText,
+                        style: const TextStyle(
+                          fontSize: 36,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xff0f172a),
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      Text(
+                        '${hasActiveShift ? (targetPercent == 0 ? 1 : targetPercent) : 0}% of 8h standard target',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xff94a3b8),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: progressValue,
+                      backgroundColor: _chip,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Color(0xff0f172a),
+                      ),
+                      minHeight: 4,
+                    ),
+                  ),
+                ],
+              );
+
+              final actionButtons = Column(
+                crossAxisAlignment: isNarrow
+                    ? CrossAxisAlignment.stretch
+                    : CrossAxisAlignment.end,
+                children: [
+                  // Take a Break Button
+                  ElevatedButton.icon(
+                    onPressed: !widget.checkedIn || widget.isPunching
+                        ? null
+                        : widget.onToggleBreak,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isDark ? const Color(0xff2a2008) : const Color(0xfffef3c7),
+                      foregroundColor: const Color(0xff92400e),
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 11),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    icon: Icon(
+                      activeBreak != null
+                          ? Icons.stop_circle_outlined
+                          : Icons.coffee_outlined,
+                      size: 16,
+                      color: const Color(0xff92400e),
+                    ),
+                    label: Text(
+                      activeBreak != null ? 'End Break' : 'Take a Break',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xff92400e),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // Check Out / Check In Button
+                  ElevatedButton.icon(
+                    onPressed: (widget.isPunching ||
+                            (widget.checkOutTime != null && !widget.checkedIn))
+                        ? null
+                        : widget.onToggle,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _brandBg,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 11),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    icon: widget.isPunching
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : Icon(
+                            widget.checkedIn ? Icons.logout : Icons.login,
+                            size: 15,
+                            color: Colors.white,
+                          ),
+                    label: Text(
+                      widget.isPunching
+                          ? (widget.checkedIn
+                              ? 'Checking out...'
+                              : 'Checking in...')
+                          : (widget.checkedIn
+                              ? 'Check Out'
+                              : widget.checkOutTime != null
+                                  ? 'Shift Complete'
+                                  : 'Check In'),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+
+              if (isNarrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    timeColumn,
+                    const SizedBox(height: 16),
+                    actionButtons,
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: timeColumn),
+                  const SizedBox(width: 24),
+                  actionButtons,
+                ],
+              );
+            }),
+
+            const SizedBox(height: 16),
+            const Divider(color: Color(0xfff1f5f9), height: 1, thickness: 1),
+            const SizedBox(height: 16),
+
+            // ── C. Attendance Summary Cards ───────────────────────────
+            LayoutBuilder(builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 460;
+
+              final checkInCard = Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: _cardAlt,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _line),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: _isDark ? const Color(0xff0d2318) : const Color(0xffecfdf5),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.login_rounded,
+                              size: 16, color: Color(0xff10b981)),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: _isDark ? const Color(0xff0d2318) : const Color(0xffecfdf5),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            hasActiveShift ? 'Done' : 'Pending',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xff10b981),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Check In',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xff64748b),
+                          fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 4,
+                      runSpacing: 2,
+                      children: [
+                        Text(
+                          checkInText,
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xff0f172a)),
+                        ),
+                        Text(
+                          hasActiveShift ? 'Recorded' : 'Waiting',
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xff94a3b8)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+
+              final checkOutCard = Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: _cardAlt,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _line),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: _isDark ? const Color(0xff2a2008) : const Color(0xfffffbeb),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.logout_rounded,
+                              size: 16, color: Color(0xfff59e0b)),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: widget.checkOutTime != null
+                                ? const Color(0xffecfdf5)
+                                : _isDark ? const Color(0xff2a2008) : const Color(0xfffffbeb),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            widget.checkOutTime != null ? 'Done' : 'Pending',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: widget.checkOutTime != null
+                                    ? const Color(0xff10b981)
+                                    : const Color(0xffd97706),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Check Out',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xff64748b),
+                          fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 4,
+                      runSpacing: 2,
+                      children: [
+                        Text(
+                          checkOutText,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: widget.checkOutTime != null
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            fontStyle: widget.checkOutTime == null
+                                ? FontStyle.italic
+                                : FontStyle.normal,
+                            color: widget.checkOutTime != null
+                                ? _ink
+                                : _muted,
+                          ),
+                        ),
+                        Text(
+                          widget.checkOutTime != null
+                              ? 'Recorded'
+                              : 'Scheduled 06:00 PM',
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xff94a3b8)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+
+              final breakTimeCard = Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: _cardAlt,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _line),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: _isDark ? const Color(0xff2a2008) : const Color(0xfffffbeb),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.coffee_outlined,
+                              size: 16, color: Color(0xfff59e0b)),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: _surface,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: _line),
+                          ),
+                          child: Text(
+                            '$totalBreaksCount break${totalBreaksCount == 1 ? '' : 's'}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xff64748b),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Break Time',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xff64748b),
+                          fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 4,
+                      runSpacing: 2,
+                      children: [
+                        Text(
+                          '$totalBreakMinutes min',
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xff0f172a)),
+                        ),
+                        const Text(
+                          'Max 1h allowed',
+                          style: TextStyle(
+                              fontSize: 11, color: Color(0xff94a3b8)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+
+              if (isNarrow) {
+                return Column(
+                  children: [
+                    checkInCard,
+                    const SizedBox(height: 12),
+                    checkOutCard,
+                    const SizedBox(height: 12),
+                    breakTimeCard,
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  Expanded(child: checkInCard),
+                  const SizedBox(width: 14),
+                  Expanded(child: checkOutCard),
+                  const SizedBox(width: 14),
+                  Expanded(child: breakTimeCard),
+                ],
+              );
+            }),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+
+      // ── D. Weekly Statistics ─────────────────────────────────
+      LayoutBuilder(builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 460;
+
+        final card1 = _buildStatCard(
+            'WEEKLY HOURS', weeklyHoursStr, _ink);
+        final card2 = _buildStatCard(
+            'AVG CHECK-IN', avgCheckInStr, _ink);
+        final card3 = _buildStatCard(
+            'ON-TIME RATE', onTimeRateStr, const Color(0xff10b981));
+
+        if (isNarrow) {
+          return Column(
+            children: [
+              card1,
+              const SizedBox(height: 10),
+              card2,
+              const SizedBox(height: 10),
+              card3,
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: card1),
+            const SizedBox(width: 14),
+            Expanded(child: card2),
+            const SizedBox(width: 14),
+            Expanded(child: card3),
+          ],
+        );
+      }),
+
+      // Break Details (when breaks exist)
       if (widget.attendance?.breaks.isNotEmpty == true) ...[
-        const SizedBox(height: 14),
-        Text('Break Details',
+        const SizedBox(height: 18),
+        const Text('Break Details',
             style: TextStyle(
-                fontSize: 15, fontWeight: FontWeight.w700, color: _ink)),
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: Color(0xff0f172a))),
         const SizedBox(height: 8),
         _ProfileCard(
             child:
@@ -3056,58 +3855,139 @@ class _PunchPageState extends State<_PunchPage> {
                           children: [
                         Text(
                             '${_breakTypeLabel(item.breakType)} · ${TimeOfDay.fromDateTime(item.startTime).format(context)} – ${item.endTime == null ? 'Active' : TimeOfDay.fromDateTime(item.endTime!).format(context)}',
-                            style: TextStyle(
+                            style: const TextStyle(
                                 fontSize: 13,
-                                color: _ink,
+                                color: Color(0xff0f172a),
                                 fontWeight: FontWeight.w600)),
                         Text(
                             '${_formatShortDuration(item.durationAt(DateTime.now()))} · ${item.isActive ? 'On Break' : 'Completed'}',
-                            style: TextStyle(fontSize: 12, color: _muted)),
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xff64748b))),
                       ])),
                 ])),
         ])),
       ],
-      const SizedBox(height: 14),
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Attendance History',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: _ink,
-              ),
-            ),
-          ),
-          if (widget.attendanceRecords.isNotEmpty)
-            TextButton.icon(
-              key: const ValueKey('clear-attendance-history-button'),
-              onPressed: _isClearingHistory ? null : _handleClearHistory,
-              icon: _isClearingHistory
-                  ? const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    )
-                  : const Icon(Icons.delete_sweep_outlined,
-                      size: 15, color: Color(0xffd84747)),
-              label: Text(
-                'Clear History',
+
+      const SizedBox(height: 16),
+
+      // ── E. Attendance History ────────────────────────────────
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 620;
+          final titlePart = Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text(
+                'Attendance History',
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: _isClearingHistory ? _muted : const Color(0xffd84747),
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xff0f172a),
                 ),
               ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                visualDensity: VisualDensity.compact,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _chip,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${widget.attendanceRecords.length} Records',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xff64748b),
+                  ),
+                ),
               ),
-            ),
-        ],
+            ],
+          );
+
+          final actionPart = Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.calendar_today_outlined,
+                      size: 14, color: Color(0xff64748b)),
+                  const SizedBox(width: 6),
+                  Text(
+                    _formatMonthYear(DateTime.now()),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xff64748b),
+                    ),
+                  ),
+                ],
+              ),
+              if (widget.attendanceRecords.isNotEmpty)
+                InkWell(
+                  key: const ValueKey('clear-attendance-history-button'),
+                  onTap: _isClearingHistory ? null : _handleClearHistory,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_isClearingHistory)
+                          const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 1.5, color: Color(0xffef4444)),
+                          )
+                        else
+                          const Icon(Icons.delete_outline_rounded,
+                              size: 15, color: Color(0xffef4444)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Clear History',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _isClearingHistory
+                                ? _muted
+                                : const Color(0xffef4444),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          );
+
+          if (isNarrow) {
+            return Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                titlePart,
+                actionPart,
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              titlePart,
+              const Spacer(),
+              actionPart,
+            ],
+          );
+        },
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 12),
       if (widget.attendanceRecords.isEmpty)
         _ProfileCard(
           child: Container(
@@ -3141,35 +4021,7 @@ class _PunchPageState extends State<_PunchPage> {
         )
       else
         for (final item in widget.attendanceRecords)
-          _buildHistoryItem(context, item),
-      const SizedBox(height: 18),
-      SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-              onPressed: widget.isPunching
-                  ? null
-                  : (widget.checkedIn || widget.checkOutTime == null
-                      ? widget.onToggle
-                      : null),
-              icon: widget.isPunching
-                  ? const SizedBox(
-                      width: 15,
-                      height: 15,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Icon(widget.checkedIn ? Icons.logout : Icons.login,
-                      size: 15),
-              label: Text(widget.isPunching
-                  ? (widget.checkedIn ? 'Checking out...' : 'Checking in...')
-                  : (widget.checkedIn
-                      ? 'Check Out'
-                      : widget.checkOutTime != null
-                          ? 'Shift Complete'
-                          : 'Check In')),
-              style: FilledButton.styleFrom(
-                  backgroundColor:
-                      widget.checkedIn ? const Color(0xffd84747) : _blue))),
+          _buildHistoryItem(context, item, trackedText),
     ]);
   }
 }
@@ -3327,11 +4179,11 @@ class _AttendanceDetailBottomSheetState
                   _pill(
                     record.sessionStatusLabel,
                     isOngoing
-                        ? const Color(0xfffff7e6)
-                        : const Color(0xffe8f8ef),
+                        ? (_isDark ? const Color(0xff2a2008) : const Color(0xfffff7e6))
+                        : (_isDark ? const Color(0xff0d2318) : const Color(0xffe8f8ef)),
                     isOngoing
-                        ? const Color(0xffd48b0c)
-                        : const Color(0xff198754),
+                        ? (_isDark ? const Color(0xfffbbf24) : const Color(0xffd48b0c))
+                        : (_isDark ? const Color(0xff34d399) : const Color(0xff198754)),
                   ),
                   const SizedBox(width: 8),
                   IconButton(
@@ -3354,14 +4206,14 @@ class _AttendanceDetailBottomSheetState
                           horizontal: 14, vertical: 10),
                       margin: const EdgeInsets.only(bottom: 14),
                       decoration: BoxDecoration(
-                        color: const Color(0xfffff8ec),
+                        color: _isDark ? const Color(0xff2a2008) : const Color(0xfffff8ec),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xfffae0b5)),
+                        border: Border.all(color: _isDark ? const Color(0xff4a3a10) : const Color(0xfffae0b5)),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.info_outline,
-                              size: 18, color: Color(0xffd48b0c)),
+                          Icon(Icons.info_outline,
+                              size: 18, color: _isDark ? const Color(0xfffbbf24) : const Color(0xffd48b0c)),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -3369,7 +4221,7 @@ class _AttendanceDetailBottomSheetState
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: const Color(0xffa66a16),
+                                color: _isDark ? const Color(0xfffbbf24) : const Color(0xffa66a16),
                               ),
                             ),
                           ),
@@ -3394,16 +4246,16 @@ class _AttendanceDetailBottomSheetState
                       'Attendance Status',
                       record.displayStatus,
                       valueColor: record.isLate
-                          ? const Color(0xffd84747)
-                          : const Color(0xff198754),
+                          ? (_isDark ? const Color(0xfff87171) : const Color(0xffd84747))
+                          : (_isDark ? const Color(0xff34d399) : const Color(0xff198754)),
                       trailingBadge: _pill(
                         record.displayStatus,
                         record.isLate
-                            ? const Color(0xffffeeee)
-                            : const Color(0xffe8f8ef),
+                            ? (_isDark ? const Color(0xff2a0d0d) : const Color(0xffffeeee))
+                            : (_isDark ? const Color(0xff0d2318) : const Color(0xffe8f8ef)),
                         record.isLate
-                            ? const Color(0xffd84747)
-                            : const Color(0xff198754),
+                            ? (_isDark ? const Color(0xfff87171) : const Color(0xffd84747))
+                            : (_isDark ? const Color(0xff34d399) : const Color(0xff198754)),
                       ),
                     ),
                     _sheetDivider(),
@@ -3544,8 +4396,12 @@ class _AttendanceDetailBottomSheetState
               const Spacer(),
               _pill(
                 b.isActive ? 'Active (Ongoing)' : 'Completed',
-                b.isActive ? const Color(0xfffff7e6) : const Color(0xffe8f8ef),
-                b.isActive ? const Color(0xffd48b0c) : const Color(0xff198754),
+                b.isActive
+                    ? (_isDark ? const Color(0xff2a2008) : const Color(0xfffff7e6))
+                    : (_isDark ? const Color(0xff0d2318) : const Color(0xffe8f8ef)),
+                b.isActive
+                    ? (_isDark ? const Color(0xfffbbf24) : const Color(0xffd48b0c))
+                    : (_isDark ? const Color(0xff34d399) : const Color(0xff198754)),
               ),
             ],
           ),
@@ -3636,6 +4492,7 @@ class _AttendanceDetailBottomSheetState
         ),
       );
 }
+
 String _formatDisplayDate(String isoOrDate) {
   final d = DateTime.tryParse(isoOrDate)?.toLocal();
   if (d == null) return isoOrDate;
@@ -3747,7 +4604,7 @@ class _LeavePage extends StatefulWidget {
   State<_LeavePage> createState() => _LeavePageState();
 }
 
-class _LeavePageState extends State<_LeavePage> {
+class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
   String _type = 'Casual Leave';
   DateTime _startDate = DateTime.now();
   DateTime _endDate = DateTime.now();
@@ -3755,16 +4612,63 @@ class _LeavePageState extends State<_LeavePage> {
   String? _medicalProofPath;
   Uint8List? _medicalProofBytes;
   bool _isSubmitting = false;
+  bool _showAllRequests = false;
   final _reasonController = TextEditingController();
+  late int _currentMonth;
+  late int _currentYear;
+  Timer? _monthCheckTimer;
+  Set<String> _hiddenLeaveIds = {};
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final now = DateTime.now();
+    _currentMonth = now.month;
+    _currentYear = now.year;
+    _monthCheckTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _checkMonthChange();
+    });
+    _loadHiddenLeaves();
     unawaited(widget.repository.fetchStaffLeaves());
+  }
+
+  Future<void> _loadHiddenLeaves() async {
+    final staffId = widget.staffId.trim().isNotEmpty
+        ? widget.staffId.trim()
+        : (widget.repository.currentUser.value?.id.trim() ?? '');
+    if (staffId.isNotEmpty) {
+      final ids = await TokenStorage.getHiddenLeaveIds(staffId);
+      if (mounted) {
+        setState(() => _hiddenLeaveIds = ids);
+      }
+    }
+  }
+
+  void _checkMonthChange() {
+    final now = DateTime.now();
+    if (now.month != _currentMonth || now.year != _currentYear) {
+      if (mounted) {
+        setState(() {
+          _currentMonth = now.month;
+          _currentYear = now.year;
+        });
+        widget.repository.fetchStaffLeaves();
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkMonthChange();
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _monthCheckTimer?.cancel();
     _reasonController.dispose();
     super.dispose();
   }
@@ -4009,6 +4913,9 @@ class _LeavePageState extends State<_LeavePage> {
   }
 
   void _openRequestDetail(BuildContext context, LeaveRequest req) {
+    final currentStaffId = widget.staffId.trim().isNotEmpty
+        ? widget.staffId.trim()
+        : (widget.repository.currentUser.value?.id.trim() ?? '');
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -4019,12 +4926,108 @@ class _LeavePageState extends State<_LeavePage> {
         storedBytes: _storedDocBytes[req.id],
         formatDate: _formatDateStr,
         monthName: _monthName,
+        onHideFromHistory: () async {
+          if (currentStaffId.isNotEmpty) {
+            await TokenStorage.addHiddenLeaveId(currentStaffId, req.id);
+          }
+          if (mounted) {
+            setState(() {
+              _hiddenLeaveIds.add(req.id);
+            });
+          }
+        },
       ),
     );
   }
 
   // Store uploaded doc bytes keyed by request id so detail sheet can show them.
   final Map<String, Uint8List> _storedDocBytes = {};
+
+  int _countLeaveRequests(List<LeaveRequest> requests, String type, {DateTime? targetDate}) {
+    final now = (targetDate ?? DateTime.now()).toLocal();
+    return requests.where((r) {
+      if (r.status.toLowerCase().trim() == 'cancelled') return false;
+      final created = r.createdAt.toLocal();
+      if (created.year != now.year || created.month != now.month) {
+        return false;
+      }
+      final t = r.type.toLowerCase().trim();
+      final target = type.toLowerCase().trim();
+      if (t == target) return true;
+      if (target.contains('casual') && t.contains('casual')) return true;
+      if (target.contains('medical') && t.contains('medical')) return true;
+      if (target.contains('earned') &&
+          (t.contains('earned') || t.contains('annual'))) return true;
+      if (target.contains('sick') && t.contains('sick')) return true;
+      return false;
+    }).length;
+  }
+
+  Widget _buildCountCard(
+    String label,
+    int count,
+    IconData icon,
+    Color iconColor,
+    Color iconBg,
+  ) {
+    // Darken tinted icon bg in dark mode — reduce opacity
+    final effectiveIconBg = _isDark ? iconColor.withValues(alpha: 0.15) : iconBg;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _isDark ? const Color(0xff1c2430) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _line),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x050f172a),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                    color: _muted,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: _ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: effectiveIconBg,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 20, color: iconColor),
+          ),
+        ],
+      ),
+    );
+  }
 
   // ── build ──────────────────────────────────────────────────────────────────
 
@@ -4036,254 +5039,635 @@ class _LeavePageState extends State<_LeavePage> {
     return ValueListenableBuilder<List<LeaveRequest>>(
       valueListenable: widget.repository.leaveRequests,
       builder: (context, allRequests, _) {
-        final myRequests = allRequests
-            .where((r) =>
-                r.staffId == widget.staffId ||
-                r.staffId.isEmpty ||
-                widget.staffId.isEmpty)
-            .toList()
+        final currentStaffId = widget.staffId.trim().isNotEmpty
+            ? widget.staffId.trim()
+            : (widget.repository.currentUser.value?.id.trim() ?? '');
+        final myRequests = allRequests.where((r) {
+          if (currentStaffId.isNotEmpty) {
+            return r.staffId.trim() == currentStaffId;
+          }
+          return true;
+        }).toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+        final casualCount = _countLeaveRequests(myRequests, 'Casual Leave');
+        final medCount = _countLeaveRequests(myRequests, 'Medical Leave');
+        final earnedCount = _countLeaveRequests(myRequests, 'Earned Leave');
+        final sickCount = _countLeaveRequests(myRequests, 'Sick Leave');
+
+        final visibleRequests = myRequests
+            .where((r) => !_hiddenLeaveIds.contains(r.id))
+            .toList();
+
         return _ScrollPage(children: [
-          const SizedBox(height: 11),
-          Row(children: [
-            Expanded(
-                child: Text('Leave',
-                    style: TextStyle(
+          const SizedBox(height: 12),
+          // ── Header ─────────────────────────────────────────────────────────
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Leave',
+                      style: TextStyle(
                         fontWeight: FontWeight.w700,
-                        fontSize: 18,
-                        color: textColor))),
-            _pill('●  Available', const Color(0xffe8f8ef),
-                const Color(0xff198754))
-          ]),
-          const SizedBox(height: 20),
+                        fontSize: 24,
+                        color: textColor,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    const Text(
+                      'Manage leave applications, time-off requests, and history.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xff64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xffECFDF5),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xffA7F3D0)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '● ',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xff059669),
+                      ),
+                    ),
+                    Text(
+                      'Available',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xff059669),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // ── 4 Leave Summary Cards ──────────────────────────────────────────
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth > 750) {
+                return Row(
+                  children: [
+                    Expanded(
+                      child: _buildCountCard(
+                        'CASUAL LEAVE',
+                        casualCount,
+                        Icons.calendar_month,
+                        const Color(0xff2563EB),
+                        const Color(0xffEFF6FF),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _buildCountCard(
+                        'MEDICAL LEAVE',
+                        medCount,
+                        Icons.medical_services_outlined,
+                        const Color(0xff0D9488),
+                        const Color(0xffF0FDFA),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _buildCountCard(
+                        'EARNED LEAVE',
+                        earnedCount,
+                        Icons.event_available,
+                        const Color(0xff4F46E5),
+                        const Color(0xffEEF2FF),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _buildCountCard(
+                        'SICK LEAVE',
+                        sickCount,
+                        Icons.favorite_outline,
+                        const Color(0xffEA580C),
+                        const Color(0xffFFF7ED),
+                      ),
+                    ),
+                  ],
+                );
+              } else {
+                final cardW = (constraints.maxWidth - 12) / 2;
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    SizedBox(
+                      width: cardW,
+                      child: _buildCountCard(
+                        'CASUAL LEAVE',
+                        casualCount,
+                        Icons.calendar_month,
+                        const Color(0xff2563EB),
+                        const Color(0xffEFF6FF),
+                      ),
+                    ),
+                    SizedBox(
+                      width: cardW,
+                      child: _buildCountCard(
+                        'MEDICAL LEAVE',
+                        medCount,
+                        Icons.medical_services_outlined,
+                        const Color(0xff0D9488),
+                        const Color(0xffF0FDFA),
+                      ),
+                    ),
+                    SizedBox(
+                      width: cardW,
+                      child: _buildCountCard(
+                        'EARNED LEAVE',
+                        earnedCount,
+                        Icons.event_available,
+                        const Color(0xff4F46E5),
+                        const Color(0xffEEF2FF),
+                      ),
+                    ),
+                    SizedBox(
+                      width: cardW,
+                      child: _buildCountCard(
+                        'SICK LEAVE',
+                        sickCount,
+                        Icons.favorite_outline,
+                        const Color(0xffEA580C),
+                        const Color(0xffFFF7ED),
+                      ),
+                    ),
+                  ],
+                );
+              }
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // ── Leave Request Card ─────────────────────────────────────────────
           _ProfileCard(
-              child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                                child: Text('Leave Request',
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 18,
-                                        color: textColor))),
-                            const SizedBox(width: 8),
-                            Text('Fill all fields',
-                                style:
-                                    TextStyle(fontSize: 12, color: mutedColor))
+                            Text(
+                              'Leave Request',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 18,
+                                color: textColor,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            const Text(
+                              'Submit your scheduled absence for supervisor approval',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Color(0xff64748B),
+                              ),
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 14),
-                        _smallLabel('Leave Type', color: mutedColor),
-                        DropdownButtonFormField<String>(
-                            value: _type,
-                            isDense: true,
-                            style: TextStyle(fontSize: 13, color: textColor),
-                            items: const [
-                              'Casual Leave',
-                              'Sick Leave',
-                              'Earned Leave',
-                              'Medical Leave',
-                            ]
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (v) =>
-                                setState(() => _type = v ?? _type),
-                            decoration: _fieldDecoration(
-                                textColor: textColor,
-                                hintColor: mutedColor,
-                                borderColor: borderColor,
-                                fillColor: _fieldBg)),
-                        const SizedBox(height: 6),
-                        Text(
-                            switch (_type) {
-                              'Casual Leave' =>
-                                'Apply at least 3 working days in advance.',
-                              'Earned Leave' =>
-                                'Apply at least 7 calendar days in advance.',
-                              'Sick Leave' =>
-                                'Submit as soon as possible. Medical proof is optional.',
-                              'Medical Leave' =>
-                                'Submit as soon as possible. Medical proof is required.',
-                              _ => 'Submit as soon as possible.',
-                            },
-                            style: TextStyle(fontSize: 11, color: mutedColor)),
-                        if (_type == 'Medical Leave' ||
-                            _type == 'Sick Leave') ...[
-                          const SizedBox(height: 12),
-                          _smallLabel(
-                            _type == 'Medical Leave'
-                                ? 'Medical Document (Required)'
-                                : 'Medical Document (Optional)',
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Fill all fields',
+                        style: TextStyle(fontSize: 12, color: mutedColor),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Divider(color: borderColor, height: 1, thickness: 1),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'LEAVE TYPE',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      color: Color(0xff64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    // ignore: deprecated_member_use
+                    value: _type,
+                    isDense: true,
+                    style: TextStyle(fontSize: 14, color: textColor),
+                    icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xff64748B)),
+                    items: const [
+                      'Casual Leave',
+                      'Sick Leave',
+                      'Earned Leave',
+                      'Medical Leave',
+                    ]
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _type = v ?? _type),
+                    decoration: _fieldDecoration(
+                      textColor: textColor,
+                      hintColor: mutedColor,
+                      borderColor: borderColor,
+                      fillColor: _fieldBg,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.access_time, size: 14, color: Color(0xff94A3B8)),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          switch (_type) {
+                            'Casual Leave' => 'Apply at least 3 working days in advance.',
+                            'Earned Leave' => 'Apply at least 7 calendar days in advance.',
+                            'Sick Leave' => 'Submit as soon as possible. Medical proof is optional.',
+                            'Medical Leave' => 'Submit as soon as possible. Medical proof is required.',
+                            _ => 'Submit as soon as possible.',
+                          },
+                          style: TextStyle(fontSize: 12, color: mutedColor),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_type == 'Medical Leave' || _type == 'Sick Leave') ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      _type == 'Medical Leave'
+                          ? 'Medical Document (Required)'
+                          : 'Medical Document (Optional)',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                        color: Color(0xff64748B),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    if (_medicalProofName == null)
+                      Text(
+                        _type == 'Medical Leave'
+                            ? 'Medical document not uploaded'
+                            : 'No document attached (Optional)',
+                        style: TextStyle(fontSize: 12, color: mutedColor),
+                      ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _pickMedicalProof,
+                          icon: const Icon(Icons.attach_file, size: 16),
+                          label: Text(_medicalProofName == null
+                              ? (_type == 'Medical Leave'
+                                  ? 'Attach Medical Proof'
+                                  : 'Attach Proof (Optional)')
+                              : 'Change Document'),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: borderColor),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                        if (_medicalProofName != null)
+                          OutlinedButton.icon(
+                            onPressed: _previewMedicalProof,
+                            icon: const Icon(Icons.visibility_outlined, size: 16),
+                            label: const Text('View Document'),
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(color: borderColor),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                        if (_medicalProofName != null)
+                          IconButton(
+                            tooltip: 'Remove document',
+                            onPressed: () => setState(() {
+                              _medicalProofName = null;
+                              _medicalProofPath = null;
+                              _medicalProofBytes = null;
+                            }),
+                            icon: const Icon(Icons.close, size: 18),
+                          ),
+                      ],
+                    ),
+                    if (_medicalProofName != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          _medicalProofName!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: textColor),
+                        ),
+                      ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'PDF, JPG or PNG',
+                      style: TextStyle(fontSize: 10, color: mutedColor),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  // DURATION label and badge
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'DURATION',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: Color(0xff64748B),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xffEFF6FF),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '$_leaveDays ${_leaveDays == 1 ? 'Day' : 'Days'}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xff2563EB),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  LayoutBuilder(
+                    builder: (context, boxConstraints) {
+                      final isNarrow = boxConstraints.maxWidth < 420;
+                      final startBox = GestureDetector(
+                        onTap: () => _pickDate(start: true),
+                        child: _dateBox(
+                          '📅  ${_formatDate(_startDate)}',
+                          textColor: textColor,
+                          borderColor: borderColor,
+                          backgroundColor: _fieldBg,
+                        ),
+                      );
+
+                      final endBox = GestureDetector(
+                        onTap: () => _pickDate(start: false),
+                        child: _dateBox(
+                          '📅  ${_formatDate(_endDate)}',
+                          textColor: textColor,
+                          borderColor: borderColor,
+                          backgroundColor: _fieldBg,
+                        ),
+                      );
+
+                      if (isNarrow) {
+                        return Column(
+                          children: [
+                            startBox,
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Text('to', style: TextStyle(fontSize: 12, color: mutedColor)),
+                            ),
+                            endBox,
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: startBox),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            child: Text('to', style: TextStyle(fontSize: 12, color: mutedColor)),
+                          ),
+                          Expanded(child: endBox),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'REASON FOR LEAVE',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      color: Color(0xff64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _reasonController,
+                    maxLines: 3,
+                    style: TextStyle(fontSize: 14, color: textColor),
+                    decoration: _fieldDecoration(
+                      hint: 'Family function / personal reason for leave...',
+                      textColor: textColor,
+                      hintColor: mutedColor,
+                      borderColor: borderColor,
+                      fillColor: _fieldBg,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton(
+                      onPressed: _isSubmitting ? null : _submitRequest,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _isDark ? _primaryAccent : const Color(0xff111D3A),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  'Submit Request',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(width: 8),
+                                Icon(Icons.arrow_forward, size: 16, color: Colors.white),
+                              ],
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Request History Card ───────────────────────────────────────────
+          _ProfileCard(
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          'Request History',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: textColor,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: _isDark ? const Color(0xff1e293b) : const Color(0xffF1F5F9),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: borderColor),
+                        ),
+                        child: Text(
+                          '${visibleRequests.length} total',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
                             color: mutedColor,
                           ),
-                          const SizedBox(height: 6),
-                          if (_medicalProofName == null)
-                            Text(
-                              _type == 'Medical Leave'
-                                  ? 'Medical document not uploaded'
-                                  : 'No document attached (Optional)',
-                              style: TextStyle(fontSize: 12, color: mutedColor),
-                            ),
-                          Wrap(
-                              spacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                OutlinedButton.icon(
-                                    onPressed: _pickMedicalProof,
-                                    icon:
-                                        const Icon(Icons.attach_file, size: 17),
-                                    label: Text(_medicalProofName == null
-                                        ? (_type == 'Medical Leave'
-                                            ? 'Attach Medical Proof'
-                                            : 'Attach Proof (Optional)')
-                                        : 'Change Document')),
-                                if (_medicalProofName != null)
-                                  OutlinedButton.icon(
-                                      onPressed: _previewMedicalProof,
-                                      icon: const Icon(
-                                          Icons.visibility_outlined,
-                                          size: 17),
-                                      label: const Text('View Document')),
-                                if (_medicalProofName != null)
-                                  IconButton(
-                                      tooltip: 'Remove document',
-                                      onPressed: () => setState(() {
-                                            _medicalProofName = null;
-                                            _medicalProofPath = null;
-                                            _medicalProofBytes = null;
-                                          }),
-                                      icon: const Icon(Icons.close, size: 18)),
-                              ]),
-                          if (_medicalProofName != null)
-                            Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(_medicalProofName!,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        fontSize: 12, color: textColor))),
-                          Text('PDF, JPG or PNG',
-                              style:
-                                  TextStyle(fontSize: 10, color: mutedColor)),
-                        ],
-                        const SizedBox(height: 12),
-                        _smallLabel('Duration', color: mutedColor),
-                        Row(children: [
-                          Expanded(
-                              child: GestureDetector(
-                                  onTap: () => _pickDate(start: true),
-                                  child: _dateBox(
-                                      '📅  ${_formatDate(_startDate)}',
-                                      textColor: textColor,
-                                      borderColor: borderColor,
-                                      backgroundColor: _fieldBg))),
-                          Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 7),
-                              child: Text('to',
-                                  style: TextStyle(
-                                      fontSize: 12, color: mutedColor))),
-                          Expanded(
-                              child: GestureDetector(
-                                  onTap: () => _pickDate(start: false),
-                                  child: _dateBox(
-                                      '📅  ${_formatDate(_endDate)}',
-                                      textColor: textColor,
-                                      borderColor: borderColor,
-                                      backgroundColor: _fieldBg)))
-                        ]),
-                        const SizedBox(height: 12),
-                        _smallLabel('Reason for Leave', color: mutedColor),
-                        TextField(
-                            controller: _reasonController,
-                            maxLines: 3,
-                            style: TextStyle(fontSize: 13, color: textColor),
-                            decoration: _fieldDecoration(
-                                hint:
-                                    'Family function / personal reason for leave...',
-                                textColor: textColor,
-                                hintColor: mutedColor,
-                                borderColor: borderColor,
-                                fillColor: _fieldBg)),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                            width: double.infinity,
-                            height: 46,
-                            child: FilledButton(
-                              onPressed: _isSubmitting ? null : _submitRequest,
-                              style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xff172d50),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10))),
-                              child: _isSubmitting
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                          color: Colors.white, strokeWidth: 2))
-                                  : const Text('Submit Request',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600)),
-                            ))
-                      ]))),
-          const SizedBox(height: 20),
-          // ── Request History ────────────────────────────────────────────
-          _ProfileCard(
-              child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                                child: Text('Request History',
-                                    style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                        color: textColor))),
-                            Text('${myRequests.length} total',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                    color: mutedColor)),
-                          ],
                         ),
-                        const SizedBox(height: 10),
-                        if (myRequests.isEmpty)
-                          Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 24),
-                              child: Center(
-                                  child: Column(
-                                children: [
-                                  Icon(Icons.event_note_outlined,
-                                      size: 36,
-                                      color: mutedColor.withOpacity(0.4)),
-                                  const SizedBox(height: 8),
-                                  Text('No leave requests submitted yet.',
-                                      style: TextStyle(
-                                          color: mutedColor, fontSize: 13)),
-                                ],
-                              )))
-                        else
-                          ...myRequests.map(
-                            (req) => _LeaveRequestTile(
-                              request: req,
-                              formatDate: _formatDateStr,
-                              onTap: () => _openRequestDetail(context, req),
+                      ),
+                      const Spacer(),
+                      if (visibleRequests.length > 3)
+                        InkWell(
+                          onTap: () => setState(() => _showAllRequests = !_showAllRequests),
+                          borderRadius: BorderRadius.circular(6),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _showAllRequests ? 'Show Less' : 'View All',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xff2563EB),
+                                  ),
+                                ),
+                                const SizedBox(width: 2),
+                                Icon(
+                                  _showAllRequests
+                                      ? Icons.keyboard_arrow_up
+                                      : Icons.keyboard_arrow_right,
+                                  size: 16,
+                                  color: const Color(0xff2563EB),
+                                ),
+                              ],
                             ),
                           ),
-                      ]))),
+                        )
+                      else
+                        const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'View All',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xff2563EB),
+                              ),
+                            ),
+                            SizedBox(width: 2),
+                            Icon(Icons.keyboard_arrow_right, size: 16, color: Color(0xff2563EB)),
+                          ],
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  if (visibleRequests.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.event_note_outlined,
+                              size: 36,
+                              color: mutedColor.withValues(alpha: 0.4),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'No leave requests submitted yet.',
+                              style: TextStyle(color: mutedColor, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else ...[
+                    for (int i = 0;
+                        i < (visibleRequests.length > 3 && !_showAllRequests ? 3 : visibleRequests.length);
+                        i++) ...[
+                      if (i > 0)
+                        Divider(color: borderColor.withValues(alpha: 0.5), height: 14, thickness: 1),
+                      _LeaveRequestTile(
+                        request: visibleRequests[i],
+                        formatDate: _formatDateStr,
+                        onTap: () => _openRequestDetail(context, visibleRequests[i]),
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+          ),
           const SizedBox(height: 24),
         ]);
       },
@@ -4313,82 +5697,151 @@ class _LeaveRequestTile extends StatelessWidget {
         ? toDt.difference(fromDt).inDays + 1
         : 1;
     final datesLabel = from == to ? from : '$from – $to';
-    final daysText = '$days ${days == 1 ? 'day' : 'days'}';
+    final daysText = '$days ${days == 1 ? 'Day' : 'Days'}';
+
+    final (icon, iconColor, iconBg) = switch (request.type) {
+      'Sick Leave' => (
+          Icons.favorite_outline,
+          const Color(0xffE11D48),
+          _isDark ? const Color(0xff2d0d16) : const Color(0xffFFF1F2),
+        ),
+      'Medical Leave' => (
+          Icons.medical_services_outlined,
+          const Color(0xff0D9488),
+          _isDark ? const Color(0xff052a27) : const Color(0xffF0FDFA),
+        ),
+      'Earned Leave' => (
+          Icons.event_available,
+          const Color(0xff4F46E5),
+          _isDark ? const Color(0xff18163d) : const Color(0xffEEF2FF),
+        ),
+      _ => (
+          Icons.calendar_month,
+          const Color(0xff2563EB),
+          _isDark ? const Color(0xff0f1f38) : const Color(0xffEFF6FF),
+        ),
+    };
+
+    final (statusBg, statusFg, statusBorder) = switch (request.status.toLowerCase()) {
+      'approved' => (
+          _isDark ? const Color(0xff0d2318) : const Color(0xffECFDF5),
+          const Color(0xff059669),
+          _isDark ? const Color(0xff1a4a35) : const Color(0xffA7F3D0),
+        ),
+      'pending' => (
+          _isDark ? const Color(0xff2a2008) : const Color(0xffFFFBEB),
+          const Color(0xffD97706),
+          _isDark ? const Color(0xff4a3a10) : const Color(0xffFDE68A),
+        ),
+      _ => (
+          _isDark ? const Color(0xff2a0d0d) : const Color(0xffFEF2F2),
+          const Color(0xffDC2626),
+          _isDark ? const Color(0xff4a1515) : const Color(0xffFECACA),
+        ),
+    };
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
-      child: Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: _line)),
-        ),
-        child: Row(children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Expanded(
-                    child: Text(request.type,
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: _ink)),
-                  ),
-                  _pill(
-                    request.status,
-                    _statusBackground(request.status),
-                    _statusForeground(request.status),
-                  ),
-                ]),
-                const SizedBox(height: 4),
-                RichText(
-                  text: TextSpan(
-                    style: TextStyle(fontSize: 11, color: _muted),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: iconBg,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      TextSpan(text: '$datesLabel · '),
-                      TextSpan(
-                        text: daysText,
-                        style:
-                            TextStyle(fontWeight: FontWeight.w700, color: _ink),
+                      Flexible(
+                        child: Text(
+                          request.type,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: _ink,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '  •  $daysText',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xff64748B),
+                        ),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  request.reason,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: _muted),
-                ),
-                if (request.documentName != null &&
-                    request.documentName!.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Row(children: [
-                    Icon(Icons.attachment, size: 12, color: _blue),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        request.documentName!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: _blue,
-                            fontWeight: FontWeight.w500),
-                      ),
+                  const SizedBox(height: 3),
+                  Text(
+                    request.reason.trim().isNotEmpty
+                        ? '$datesLabel — Reason: ${request.reason}'
+                        : datesLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xff64748B),
                     ),
-                  ]),
+                  ),
+                  if (request.documentName != null &&
+                      request.documentName!.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.attachment, size: 12, color: Color(0xff2563EB)),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            request.documentName!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xff2563EB),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Icon(Icons.chevron_right, size: 18, color: _muted),
-        ]),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: statusBg,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: statusBorder),
+              ),
+              child: Text(
+                request.status,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: statusFg,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right, size: 18, color: Color(0xff94A3B8)),
+          ],
+        ),
       ),
     );
   }
@@ -4403,12 +5856,14 @@ class _LeaveDetailSheet extends StatelessWidget {
     required this.monthName,
     required this.repository,
     this.storedBytes,
+    this.onHideFromHistory,
   });
   final LeaveRequest request;
   final String Function(String) formatDate;
   final String Function(int) monthName;
   final HRRepository repository;
   final Uint8List? storedBytes;
+  final VoidCallback? onHideFromHistory;
 
   int get _days {
     final from = DateTime.tryParse(request.fromDate);
@@ -4500,16 +5955,16 @@ class _LeaveDetailSheet extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete this leave request?',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        content: const Text(
-            'Are you sure you want to delete this leave request? This action cannot be undone.',
-            style: TextStyle(fontSize: 13, color: Color(0xff556987))),
+        title: Text('Remove this leave request from your history?',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink)),
+        content: Text(
+            'This will only remove the request from your history. HR records and leave status will remain unchanged.',
+            style: TextStyle(fontSize: 13, color: _subText)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel',
-                style: TextStyle(color: Color(0xff556987))),
+            child: Text('Cancel',
+                style: TextStyle(color: _subText)),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
@@ -4525,20 +5980,11 @@ class _LeaveDetailSheet extends StatelessWidget {
     );
 
     if (confirm == true && context.mounted) {
-      try {
-        await repository.deleteLeaveRequest(request.id);
-        if (!context.mounted) return;
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Leave request deleted successfully.')),
-        );
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete request: $e')),
-          );
-        }
-      }
+      onHideFromHistory?.call();
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Leave request removed from history.')),
+      );
     }
   }
 
@@ -4555,7 +6001,7 @@ class _LeaveDetailSheet extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(top: 60),
       decoration: BoxDecoration(
-        color: _bg,
+        color: _surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
@@ -4624,15 +6070,15 @@ class _LeaveDetailSheet extends StatelessWidget {
                         child: Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: const Color(0xfff0f5ff),
+                            color: _isDark ? const Color(0xff0f1f38) : const Color(0xfff0f5ff),
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color(0xffd0e0ff)),
+                            border: Border.all(color: _isDark ? const Color(0xff1e3a5f) : const Color(0xffd0e0ff)),
                           ),
                           child: Row(children: [
                             Container(
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
-                                color: _blue.withOpacity(0.1),
+                                color: _blue.withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Icon(Icons.description_outlined,
@@ -4675,23 +6121,30 @@ class _LeaveDetailSheet extends StatelessWidget {
                     const SizedBox(height: 20),
                     Divider(color: _line),
                     const SizedBox(height: 12),
-                    // Delete Request button
+                    // Delete button
                     SizedBox(
                       width: double.infinity,
                       height: 44,
                       child: OutlinedButton.icon(
+                        key: const ValueKey('delete_cancel_leave_button'),
                         onPressed: () => _deleteRequest(context),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: const Color(0xffd84747),
-                          side: const BorderSide(color: Color(0xfff8d7da)),
-                          backgroundColor: const Color(0xfffff5f5),
+                          side: BorderSide(
+                              color: _isDark
+                                  ? const Color(0xff4a1515)
+                                  : const Color(0xfff8d7da)),
+                          backgroundColor: _isDark
+                              ? const Color(0xff2a0d0d)
+                              : const Color(0xfffff5f5),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10)),
                         ),
                         icon: const Icon(Icons.delete_outline, size: 18),
-                        label: const Text('Delete Request',
+                        label: const Text('Delete',
                             style: TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w600)),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600)),
                       ),
                     ),
                   ]),
@@ -5743,7 +7196,7 @@ class _ChatPageState extends State<_ChatPage> {
                                     padding: const EdgeInsets.only(top: 12),
                                     child: _pill(
                                         _formatDateHeader(message.timestamp),
-                                        const Color(0xffeef2f8),
+                                        _chip,
                                         _muted))),
                           GestureDetector(
                             onLongPress: () => _showMessageActions(message),
@@ -5853,17 +7306,24 @@ class _ChatPageState extends State<_ChatPage> {
 }
 
 class _SettingsPage extends StatelessWidget {
-  const _SettingsPage(
-      {required this.onOpenProfile,
-      required this.onOpenSecurity,
-      required this.onOpenChat,
-      required this.onOpenNotifications,
-      required this.onOpenAppearance,
-      required this.onOpenSupport,
-      required this.onOpenAbout,
-      required this.onOpenPrivacyPolicy,
-      required this.onOpenTerms,
-      required this.onLogout});
+  const _SettingsPage({
+    required this.onOpenProfile,
+    required this.onOpenSecurity,
+    required this.onOpenChat,
+    required this.onOpenNotifications,
+    required this.onOpenAppearance,
+    required this.onOpenSupport,
+    required this.onOpenAbout,
+    required this.onOpenPrivacyPolicy,
+    required this.onOpenTerms,
+    required this.onLogout,
+    this.staff,
+    this.department = 'Tech',
+    this.workMode = 'Office',
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
+  });
+
   final VoidCallback onOpenProfile,
       onOpenSecurity,
       onOpenChat,
@@ -5874,126 +7334,925 @@ class _SettingsPage extends StatelessWidget {
       onOpenPrivacyPolicy,
       onOpenTerms,
       onLogout;
+  final Staff? staff;
+  final String department;
+  final String workMode;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
 
-  Future<void> _confirmLogout(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-              title: Text('Log out?'),
-              content: Text('You will need to sign in again to use StaffHub.'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: Text('Cancel')),
-                TextButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: Text('Log out',
-                        style: TextStyle(color: Color(0xffd64545)))),
-              ],
-            ));
-    if (confirmed == true) onLogout();
+  Widget _sectionHeader(String title, String subtitle, {Color? titleColor}) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, right: 2, bottom: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Flexible(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: titleColor ?? _muted,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              subtitle,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: _muted,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  Widget _group(String label, List<Widget> rows) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 8),
-            child: Text(label.toUpperCase(),
-                style: TextStyle(
-                    fontSize: 10,
+  Widget _settingsCard({required Widget child, Color? borderColor, Color? bgColor, EdgeInsetsGeometry? padding}) {
+    return Container(
+      width: double.infinity,
+      padding: padding ?? const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: bgColor ?? _surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor ?? _line, width: 1),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _actionCard({
+    required IconData icon,
+    required String title,
+    Widget? badge,
+    required String description,
+    Widget? rightWidget,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: _settingsCard(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: _chip,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, size: 18, color: _muted),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            color: _ink,
+                          ),
+                        ),
+                        if (badge != null) badge,
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      description,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: _muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (rightWidget != null) ...[
+                const SizedBox(width: 8),
+                rightWidget,
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _appearanceCard() {
+    return _settingsCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: _chip,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(Icons.palette_outlined, size: 18, color: _muted),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: InkWell(
+              onTap: onOpenAppearance,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Appearance',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      color: _ink,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Light, dark, or system environment display mode',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: _muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: _chip,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _themeOption(ThemeMode.light, Icons.light_mode_outlined, 'Light'),
+                _themeOption(ThemeMode.dark, Icons.dark_mode_outlined, 'Dark'),
+                _themeOption(ThemeMode.system, Icons.desktop_windows_outlined, 'System'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _themeOption(ThemeMode mode, IconData icon, String label) {
+    final isSelected = themeMode == mode;
+    return InkWell(
+      onTap: () {
+        if (onThemeModeChanged != null) {
+          onThemeModeChanged!(mode);
+        } else {
+          onOpenAppearance();
+        }
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? _surface : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: isSelected ? Border.all(color: _line, width: 1) : null,
+          boxShadow: isSelected && !_isDark
+              ? const [BoxShadow(color: Color(0x0a000000), blurRadius: 4, offset: Offset(0, 1))]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected ? _navSelFg : _muted,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: isSelected ? _navSelFg : _muted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  Widget _employeeInfoCard({bool isCompact = false}) {
+    final staffName = staff?.name.isNotEmpty == true ? staff!.name : 'Staff Member';
+    final initial = staffName.characters.first.toUpperCase();
+    final empDept = department.isNotEmpty ? department : 'Tech';
+    final empId = staff?.id.isNotEmpty == true ? staff!.id : 'SH-8492';
+    final roleTitle = empDept == 'Telecalling' ? 'Telecalling Representative' : 'Software Engineer';
+
+    return _settingsCard(
+      padding: EdgeInsets.all(isCompact ? 14 : 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: isCompact ? 44 : 52,
+                height: isCompact ? 44 : 52,
+                decoration: BoxDecoration(
+                  color: _isDark ? const Color(0xff243347) : const Color(0xff334155),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Text(
+                    initial,
+                    style: TextStyle(fontSize: isCompact ? 18 : 22, fontWeight: FontWeight.w700, color: Colors.white),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            staffName,
+                            style: TextStyle(
+                              fontSize: isCompact ? 15 : 17,
+                              fontWeight: FontWeight.w700,
+                              color: _ink,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Icon(Icons.verified, size: 15, color: _isDark ? const Color(0xff3b82f6) : const Color(0xff64748b)),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      roleTitle,
+                      style: TextStyle(fontSize: 11.5, color: _muted),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${empDept.toUpperCase()} DEPARTMENT',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.6,
+                        color: _muted,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (!isCompact) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: _cardAlt,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _line),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'EMPLOYEE ID',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: _muted,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          empId,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: _ink,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: _isDark ? const Color(0xff0d2318) : const Color(0xfff0fdf4),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _isDark ? const Color(0xff1a4a35) : const Color(0xffbbf7d0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'WORK MODE',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: _isDark ? const Color(0xff34d399) : const Color(0xff15803d),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: _isDark ? const Color(0xff34d399) : const Color(0xff16a34a),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                '$workMode (Active)',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: _isDark ? const Color(0xff34d399) : const Color(0xff15803d),
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _detailRow(Icons.devices_outlined, 'Device Session', 'Chrome / Windows 10'),
+            const SizedBox(height: 10),
+            _detailRow(Icons.hub_outlined, 'Network Node', '10.14.82.109 (Intranet)', isMono: true),
+            const SizedBox(height: 10),
+            _detailRow(Icons.location_on_outlined, 'Office Campus', 'Bangalore HQ · Floor 3'),
+          ],
+          SizedBox(height: isCompact ? 10 : 18),
+          SizedBox(
+            width: double.infinity,
+            height: isCompact ? 38 : 42,
+            child: OutlinedButton(
+              onPressed: onOpenProfile,
+              style: OutlinedButton.styleFrom(
+                backgroundColor: _isDark ? const Color(0xff1a2b40) : const Color(0xffeff6ff),
+                side: BorderSide(color: _isDark ? const Color(0xff2563eb) : const Color(0xffdbeafe)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Manage Complete Profile',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _isDark ? const Color(0xff60a5fa) : const Color(0xff1d4ed8),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(Icons.arrow_forward, size: 14, color: _isDark ? const Color(0xff60a5fa) : const Color(0xff1d4ed8)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(IconData icon, String label, String value, {bool isMono = false}) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: _muted),
+        const SizedBox(width: 10),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: _muted),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              fontFamily: isMono ? 'monospace' : null,
+              color: _ink,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _securityAuditCard() {
+    return _settingsCard(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: _isDark ? const Color(0xff1a2b40) : const Color(0xffeff6ff),
+                  borderRadius: const BorderRadius.all(Radius.circular(10)),
+                ),
+                child: Icon(Icons.verified_user_outlined, size: 18, color: _isDark ? const Color(0xff60a5fa) : const Color(0xff1d4ed8)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Security & Audit Guard',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      'Continuous ISO/IEC 27001',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'All attendance punches, biometric authentications, and leave adjustments are written to a cryptographic, tamper-evident audit ledger compliant with global enterprise policies.',
+            style: TextStyle(
+              fontSize: 12,
+              color: _subText,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: _cardAlt,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _line),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: Color(0xff10b981),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Ledger Checkpoint',
+                    style: TextStyle(fontSize: 11, color: _muted),
+                  ),
+                ),
+                Text(
+                  'Hash: #94A2F0',
+                  style: TextStyle(
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: 1,
-                    color: _muted))),
-        _ProfileCard(
-            child: Column(children: [
-          for (var i = 0; i < rows.length; i++) ...[
-            if (i > 0) Divider(height: 1, color: _line),
-            rows[i]
-          ]
-        ])),
-        const SizedBox(height: 18),
-      ]);
+                    fontFamily: 'monospace',
+                    color: _ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              InkWell(
+                onTap: onOpenPrivacyPolicy,
+                child: Text(
+                  'Privacy FAQ >',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: _isDark ? const Color(0xff60a5fa) : const Color(0xff475569),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text('·', style: TextStyle(color: _muted)),
+              ),
+              InkWell(
+                onTap: onOpenTerms,
+                child: Text(
+                  'Security Whitepaper >',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: _isDark ? const Color(0xff60a5fa) : const Color(0xff475569),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
-  Widget build(BuildContext context) => _ScrollPage(children: [
-        const SizedBox(height: 18),
-        Text('Settings',
-            style: TextStyle(
-                fontSize: 20, fontWeight: FontWeight.w700, color: _ink)),
-        const SizedBox(height: 20),
-        _group('Account', [
-          _SettingRow(Icons.person_outline, 'Profile',
-              'View your profile and account settings',
-              onTap: onOpenProfile),
-          _SettingRow(Icons.lock_outline, 'Security',
-              'Manage password and account security',
-              onTap: onOpenSecurity),
-        ]),
-        _group('Communication', [
-          _SettingRow(Icons.chat_bubble_outline, 'Chat',
-              'Open team conversations and updates',
-              onTap: onOpenChat),
-          _SettingRow(Icons.notifications_none, 'Notifications',
-              'Manage chat, leave, and attendance alerts',
-              onTap: onOpenNotifications),
-        ]),
-        _group('App', [
-          _SettingRow(Icons.palette_outlined, 'Appearance', 'Light, dark',
-              onTap: onOpenAppearance)
-        ]),
-        _group('Legal', [
-          _SettingRow(Icons.privacy_tip_outlined, 'Privacy Policy',
-              'How StaffHub handles your information',
-              onTap: onOpenPrivacyPolicy),
-          _SettingRow(Icons.description_outlined, 'Terms & Conditions',
-              'Terms for using StaffHub',
-              onTap: onOpenTerms),
-        ]),
-        _group('Support', [
-          _SettingRow(
-              Icons.help_outline, 'Support & Helpdesk', 'Get help with StaffHub',
-              onTap: onOpenSupport),
-          _SettingRow(
-              Icons.info_outline, 'About', 'App information and version',
-              onTap: onOpenAbout),
-        ]),
-        Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 8),
-            child: Text('ACCOUNT ACTIONS',
-                style: TextStyle(
-                    fontSize: 10,
+  Widget build(BuildContext context) {
+    return _ScrollPage(children: [
+      const SizedBox(height: 8),
+      // Top Header
+      LayoutBuilder(
+        builder: (context, headerConstraints) {
+          final isNarrow = headerConstraints.maxWidth < 650;
+          if (isNarrow) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Settings',
+                  style: TextStyle(
+                    fontSize: 22,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: 1,
-                    color: _muted))),
-        Container(
-          decoration: BoxDecoration(
-              color: _surface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0xfff1d9dc))),
-          child: Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(18),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(18),
-                onTap: () => _confirmLogout(context),
-                child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: 15),
-                    child: Row(children: [
-                      Icon(Icons.logout, size: 19, color: Color(0xffd64545)),
-                      SizedBox(width: 12),
-                      Expanded(
-                          child: Text('Logout',
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xffc93640)))),
-                      Icon(Icons.chevron_right,
-                          size: 18, color: Color(0xffd64545)),
-                    ])),
-              )),
-        ),
-        const SizedBox(height: 24),
-      ]);
+                    color: _ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Manage your workspace preferences, legal policies, support resources, and active employee credentials.',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _muted,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _isDark ? const Color(0xff0d2318) : const Color(0xfff0fdf4),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: _isDark ? const Color(0xff1a4a35) : const Color(0xffbbf7d0)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 5,
+                            height: 5,
+                            decoration: const BoxDecoration(
+                              color: Color(0xff10b981),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'System Synced · SOC-2 Active',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w500,
+                              color: _isDark ? const Color(0xff34d399) : const Color(0xff15803d),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: onOpenSupport,
+                      icon: Icon(Icons.help_outline, size: 13, color: _ink),
+                      label: Text(
+                        'Help Desk',
+                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: _ink),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: _line),
+                        backgroundColor: _surface,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        minimumSize: const Size(0, 28),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Settings',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Manage your workspace preferences, legal policies, support resources, and active employee credentials.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: _muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _isDark ? const Color(0xff0d2318) : const Color(0xfff0fdf4),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _isDark ? const Color(0xff1a4a35) : const Color(0xffbbf7d0)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: Color(0xff10b981),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'System Synced · SOC-2 Active',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: _isDark ? const Color(0xff34d399) : const Color(0xff15803d),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                onPressed: onOpenSupport,
+                icon: Icon(Icons.help_outline, size: 15, color: _ink),
+                label: Text(
+                  'Help Desk',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _ink),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: _line),
+                  backgroundColor: _surface,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+      const SizedBox(height: 14),
+
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth > 850;
+
+          final leftColumn = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _sectionHeader('APP PREFERENCES', 'User Workspace Defaults'),
+              _appearanceCard(),
+              const SizedBox(height: 14),
+
+              _sectionHeader('LEGAL & COMPLIANCE', 'Corporate Governance Policies'),
+              _actionCard(
+                icon: Icons.shield_outlined,
+                title: 'Privacy Policy',
+                badge: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _isDark ? const Color(0xff0f1f38) : const Color(0xffeff6ff),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: _isDark ? const Color(0xff1e3a5f) : const Color(0xffdbeafe)),
+                  ),
+                  child: Text(
+                    'v2026.2 Updated',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: _isDark ? const Color(0xff60a5fa) : const Color(0xff1d4ed8)),
+                  ),
+                ),
+                description: 'How StaffHub manages enterprise biometric & telemetry records',
+                rightWidget: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'View Document',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _ink),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.open_in_new, size: 14, color: _ink),
+                  ],
+                ),
+                onTap: onOpenPrivacyPolicy,
+              ),
+              const SizedBox(height: 10),
+              _actionCard(
+                icon: Icons.description_outlined,
+                title: 'Terms & Conditions',
+                badge: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _isDark ? const Color(0xff0d2318) : const Color(0xffdcfce7),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: _isDark ? const Color(0xff1a4a35) : const Color(0xffbbf7d0)),
+                  ),
+                  child: Text(
+                    'Accepted',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: _isDark ? const Color(0xff34d399) : const Color(0xff166534)),
+                  ),
+                ),
+                description: 'Rules, operational codes, and technical service usage agreements',
+                rightWidget: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Signed Mar 2026',
+                      style: TextStyle(fontSize: 12, color: _muted),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.chevron_right, size: 18, color: _muted),
+                  ],
+                ),
+                onTap: onOpenTerms,
+              ),
+              const SizedBox(height: 14),
+
+              _sectionHeader('SUPPORT & DOCUMENTATION', 'Internal Ticketing'),
+              _actionCard(
+                icon: Icons.chat_bubble_outline,
+                title: 'Support & Helpdesk',
+                badge: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _isDark ? const Color(0xff18163d) : const Color(0xffeef2ff),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: _isDark ? const Color(0xff312e81) : const Color(0xffc7d2fe)),
+                  ),
+                  child: Text(
+                    '24/7 Desk',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: _isDark ? const Color(0xff818cf8) : const Color(0xff4338ca)),
+                  ),
+                ),
+                description: 'Raise tickets for punch discrepancies, attendance corrections, or HR queries',
+                rightWidget: Icon(Icons.chevron_right, size: 18, color: _muted),
+                onTap: onOpenSupport,
+              ),
+              const SizedBox(height: 10),
+              _actionCard(
+                icon: Icons.info_outline,
+                title: 'About StaffHub',
+                badge: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _chip,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: _line),
+                  ),
+                  child: Text(
+                    'v2.4.1 (Build 8904)',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: _muted),
+                  ),
+                ),
+                description: 'Enterprise release changelogs, build manifest, and open-source licenses',
+                rightWidget: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Latest Stable',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _isDark ? const Color(0xff34d399) : const Color(0xff16a34a)),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.chevron_right, size: 18, color: _muted),
+                  ],
+                ),
+                onTap: onOpenAbout,
+              ),
+            ],
+          );
+
+          final rightColumn = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _employeeInfoCard(),
+              const SizedBox(height: 18),
+              _securityAuditCard(),
+            ],
+          );
+
+          if (isWide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 58, child: leftColumn),
+                const SizedBox(width: 20),
+                Expanded(flex: 42, child: rightColumn),
+              ],
+            );
+          } else {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _employeeInfoCard(isCompact: true),
+                const SizedBox(height: 14),
+                leftColumn,
+                const SizedBox(height: 14),
+                _securityAuditCard(),
+              ],
+            );
+          }
+        },
+      ),
+      const SizedBox(height: 28),
+    ]);
+  }
 }
 
 class _SettingsDetailPage extends StatelessWidget {
@@ -6952,6 +9211,13 @@ class _AppearancePage extends StatelessWidget {
             title: 'Dark',
             icon: Icons.dark_mode_outlined,
           ),
+          Divider(height: 1, color: _line),
+          _appearanceOption(
+            context,
+            mode: ThemeMode.system,
+            title: 'System',
+            icon: Icons.brightness_auto_outlined,
+          ),
         ])),
       ]);
 
@@ -7075,6 +9341,7 @@ class _ProfilePage extends StatefulWidget {
     required this.department,
     required this.workMode,
     this.workLocation,
+    this.onBack,
   });
 
   final VoidCallback onLogout;
@@ -7083,6 +9350,7 @@ class _ProfilePage extends StatefulWidget {
   final String department;
   final String workMode;
   final String? workLocation;
+  final VoidCallback? onBack;
 
   @override
   State<_ProfilePage> createState() => _ProfilePageState();
@@ -7091,7 +9359,6 @@ class _ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<_ProfilePage> {
   late Staff _staff;
   bool _isLoading = false;
-  bool _notificationsEnabled = true;
 
   @override
   void initState() {
@@ -7128,130 +9395,612 @@ class _ProfilePageState extends State<_ProfilePage> {
     ));
   }
 
-  @override
-  Widget build(BuildContext context) => _ScrollPage(children: [
-        if (_isLoading) const LinearProgressIndicator(),
-        const SizedBox(height: 12),
-        Center(
-            child: Column(children: [
-          Container(
-              width: 76,
-              height: 76,
-              decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xff243b63), Color(0xff8ea5c8)]),
-                  boxShadow: const [
-                    BoxShadow(
-                        color: Color(0x24344d78),
-                        blurRadius: 14,
-                        offset: Offset(0, 6))
-                  ]),
-              child: Center(
-                  child: Text(
-                      _staff.name.isEmpty
-                          ? 'S'
-                          : _staff.name.characters.first.toUpperCase(),
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700)))),
-          const SizedBox(height: 12),
-          Text(_staff.name,
+  Widget _overviewMiniCard(String label, String value, {bool isDot = false}) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: BoxDecoration(
+          color: _cardAlt,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
               style: TextStyle(
-                  fontWeight: FontWeight.w700, fontSize: 18, color: _ink)),
-          const SizedBox(height: 5),
-          _pill(_staff.department.toUpperCase(), const Color(0xffeaf0ff), _blue)
-        ])),
-        const SizedBox(height: 20),
-        _Card(
-            child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(children: [
-                  _profileStat('Employee ID',
-                      _staff.id.isNotEmpty ? _staff.id : 'EMP-2024'),
-                  _profileStat('Joined', 'Mar 2024'),
-                  _profileStat('Status', 'Active')
-                ]))),
-        const SizedBox(height: 22),
-        Text('Personal Information',
-            style: TextStyle(
-                fontWeight: FontWeight.w700, fontSize: 15, color: _ink)),
-        const SizedBox(height: 10),
-        _ProfileCard(
-            child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Column(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w500,
+                color: _muted,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (isDot) ...[
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: Color(0xff10b981),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Expanded(
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: isDot ? (_isDark ? const Color(0xff34d399) : const Color(0xff166534)) : _ink,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoCard(IconData icon, String label, String value, {Color? iconColor, Color? iconBg}) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _cardAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _line),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: iconBg != null
+                  ? (_isDark ? iconBg.withValues(alpha: 0.15) : iconBg)
+                  : _chip,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _line),
+            ),
+            child: Icon(icon, size: 18, color: iconColor ?? _muted),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: _muted,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: _ink,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final staffName = _staff.name.isNotEmpty ? _staff.name : 'Staff Member';
+    final initial = staffName.characters.first.toUpperCase();
+    final empDept = _staff.department.isNotEmpty ? _staff.department : widget.department;
+    final empId = _staff.id.isNotEmpty ? _staff.id : 'EMP1066';
+    final roleTitle = empDept == 'Telecalling' ? 'Telecalling Representative' : 'Software Engineer';
+    final reportingLead = empDept == 'Telecalling' ? 'Amina Sheikh' : 'Vikram Mehta';
+
+    return _ScrollPage(children: [
+      if (_isLoading) const LinearProgressIndicator(),
+      const SizedBox(height: 6),
+
+      // Breadcrumb
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            Text(
+              'StaffHub V2.4',
+              style: TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right, size: 14, color: _muted),
+            const SizedBox(width: 8),
+            Text(
+              'Employee Directory',
+              style: TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right, size: 14, color: _muted),
+            const SizedBox(width: 8),
+            Text(
+              staffName,
+              style: TextStyle(fontSize: 12, color: _ink, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+
+      // Page Title Header
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          IconButton(
+            icon: Icon(Icons.arrow_back, color: _ink, size: 20),
+            onPressed: widget.onBack ?? () => Navigator.of(context).maybePop(),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Profile',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: _ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'View and manage your core identity, employee details, and workspace status',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: _muted,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Downloading employee profile summary...')),
+              );
+            },
+            icon: Icon(Icons.description_outlined, size: 15, color: _ink),
+            label: Text(
+              'Download CV/ID',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _ink),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: _line),
+              backgroundColor: _surface,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 18),
+
+      // Employee Overview Card
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 68,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    color: _isDark ? const Color(0xff243347) : const Color(0xff334155),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Center(
+                    child: Text(
+                      initial,
+                      style: const TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _InfoRow(Icons.mail_outline, 'Work Email', _staff.email),
-                      _InfoRow(Icons.call_outlined, 'Phone Number',
-                          _staff.phoneNumber),
-                      _InfoRow(Icons.location_city_outlined, 'Address',
-                          _staff.address),
-                      _InfoRow(Icons.apartment_outlined, 'Department',
-                          _staff.department),
-                      _InfoRow(
-                          Icons.work_outline, 'Work Mode', widget.workMode),
-                      if (widget.workMode == 'Work From Home' &&
-                          widget.workLocation != null)
-                        _InfoRow(Icons.location_on_outlined, 'Location',
-                            widget.workLocation!),
-                    ]))),
-        const SizedBox(height: 22),
-        Text('Account',
-            style: TextStyle(
-                fontWeight: FontWeight.w700, fontSize: 15, color: _ink)),
-        const SizedBox(height: 10),
-        _ProfileCard(
-            child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Column(
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            staffName,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: _ink,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: _isDark ? const Color(0xff18163d) : const Color(0xffeef2ff),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: _isDark ? const Color(0xff312e81) : const Color(0xffc7d2fe)),
+                            ),
+                            child: Text(
+                              empDept.toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: _isDark ? const Color(0xff818cf8) : const Color(0xff3730a3),
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: _isDark ? const Color(0xff0d2318) : const Color(0xffdcfce7),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: _isDark ? const Color(0xff1a4a35) : const Color(0xffbbf7d0)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xff16a34a),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  'Active',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: _isDark ? const Color(0xff34d399) : const Color(0xff166534),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        '$roleTitle · Bangalore HQ',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: _muted,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                _overviewMiniCard('Employee ID', empId),
+                const SizedBox(width: 10),
+                _overviewMiniCard('Joined', 'Mar 2024'),
+                const SizedBox(width: 10),
+                _overviewMiniCard('Status', 'Active', isDot: true),
+                const SizedBox(width: 10),
+                _overviewMiniCard('Reporting Lead', reportingLead),
+              ],
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+
+      // Personal Information Card
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _SettingRow(Icons.notifications_none, 'Notifications',
-                          'Push, email, and alerts',
-                          trailing: Switch(
-                              value: _notificationsEnabled,
-                              onChanged: (enabled) => setState(
-                                  () => _notificationsEnabled = enabled),
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap)),
-                      _SettingRow(Icons.privacy_tip_outlined,
-                          'Privacy & Policy', 'Manage your data & privacy',
-                          onTap: _openPrivacy),
-                      _SettingRow(Icons.description_outlined,
-                          'Terms & Conditions', 'View company policies',
-                          onTap: _openTerms),
-                      _SettingRow(Icons.help_outline,
-                          'Support & Helpdesk', 'Raise a support ticket',
-                          onTap: _openSupport)
-                    ]))),
-        const SizedBox(height: 22),
-        SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-                onPressed: widget.onLogout,
-                icon: const Icon(Icons.logout, size: 16),
-                label: const Text('Log Out',
-                    style:
-                        TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xffd84747),
-                    backgroundColor: const Color(0xffffeeee),
-                    minimumSize: const Size(0, 44),
-                    side: BorderSide.none,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10))))),
-        Center(
-            child: Padding(
-                padding: const EdgeInsets.all(7),
-                child: Text(
-                    'StaffHub Systems Inc. • Secure Staff Portal • v2.4.0',
-                    style: TextStyle(fontSize: 10, color: _muted)))),
-      ]);
+                      Text(
+                        'Personal Information',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: _ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Official contact details and organization unit',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton(
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Contact HR administration to request profile updates.')),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: _line),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: Text(
+                    'Edit Details',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _ink,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth > 550;
+                if (isWide) {
+                  return Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _infoCard(
+                              Icons.mail_outline,
+                              'Work Email',
+                              _staff.email,
+                              iconColor: const Color(0xff2563eb),
+                              iconBg: const Color(0xffeff6ff),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _infoCard(
+                              Icons.phone_outlined,
+                              'Phone Number',
+                              _staff.phoneNumber,
+                              iconColor: const Color(0xff16a34a),
+                              iconBg: const Color(0xfff0fdf4),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _infoCard(
+                              Icons.domain_outlined,
+                              'Address',
+                              _staff.address,
+                              iconColor: _muted,
+                              iconBg: _cardAlt,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _infoCard(
+                              Icons.business_center_outlined,
+                              'Department',
+                              _staff.department,
+                              iconColor: const Color(0xffd97706),
+                              iconBg: _isDark ? const Color(0xff2a2008) : const Color(0xfffffbeb),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _infoCard(
+                              Icons.work_outline,
+                              'Work Mode',
+                              widget.workMode,
+                              iconColor: const Color(0xff4f46e5),
+                              iconBg: const Color(0xffeef2ff),
+                            ),
+                          ),
+                          if (widget.workMode == 'Work From Home' && widget.workLocation != null) ...[
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _infoCard(
+                                Icons.location_on_outlined,
+                                'Location',
+                                widget.workLocation!,
+                                iconColor: const Color(0xff0284c7),
+                                iconBg: const Color(0xfff0f9ff),
+                              ),
+                            ),
+                          ] else
+                            const Expanded(child: SizedBox()),
+                        ],
+                      ),
+                    ],
+                  );
+                } else {
+                  return Column(
+                    children: [
+                      _infoCard(
+                        Icons.mail_outline,
+                        'Work Email',
+                        _staff.email,
+                        iconColor: const Color(0xff2563eb),
+                        iconBg: const Color(0xffeff6ff),
+                      ),
+                      const SizedBox(height: 10),
+                      _infoCard(
+                        Icons.phone_outlined,
+                        'Phone Number',
+                        _staff.phoneNumber,
+                        iconColor: const Color(0xff16a34a),
+                        iconBg: const Color(0xfff0fdf4),
+                      ),
+                      const SizedBox(height: 10),
+                      _infoCard(
+                        Icons.domain_outlined,
+                        'Address',
+                        _staff.address,
+                        iconColor: _muted,
+                        iconBg: _cardAlt,
+                      ),
+                      const SizedBox(height: 10),
+                      _infoCard(
+                        Icons.business_center_outlined,
+                        'Department',
+                        _staff.department,
+                        iconColor: const Color(0xffd97706),
+                        iconBg: _isDark ? const Color(0xff2a2008) : const Color(0xfffffbeb),
+                      ),
+                      const SizedBox(height: 10),
+                      _infoCard(
+                        Icons.work_outline,
+                        'Work Mode',
+                        widget.workMode,
+                        iconColor: const Color(0xff4f46e5),
+                        iconBg: const Color(0xffeef2ff),
+                      ),
+                      if (widget.workMode == 'Work From Home' && widget.workLocation != null) ...[
+                        const SizedBox(height: 10),
+                        _infoCard(
+                          Icons.location_on_outlined,
+                          'Location',
+                          widget.workLocation!,
+                          iconColor: const Color(0xff0284c7),
+                          iconBg: const Color(0xfff0f9ff),
+                        ),
+                      ],
+                    ],
+                  );
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+
+      // Account & Policies Card
+      Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _line),
+        ),
+        child: Column(
+          children: [
+            _SettingRow(
+              Icons.privacy_tip_outlined,
+              'Privacy & Policy',
+              'Manage your data & enterprise privacy',
+              onTap: _openPrivacy,
+            ),
+            Divider(height: 1, color: _line),
+            _SettingRow(
+              Icons.description_outlined,
+              'Terms & Conditions',
+              'View company operational policies',
+              onTap: _openTerms,
+            ),
+            Divider(height: 1, color: _line),
+            _SettingRow(
+              Icons.help_outline,
+              'Support & Helpdesk',
+              'Raise a support or IT discrepancy ticket',
+              onTap: _openSupport,
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+
+      // Logout button
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: widget.onLogout,
+          icon: const Icon(Icons.logout, size: 16, color: Color(0xffdc2626)),
+          label: const Text(
+            'Log Out',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xffdc2626)),
+          ),
+          style: OutlinedButton.styleFrom(
+            backgroundColor: _isDark ? const Color(0xff2a0d0d) : const Color(0xfffef2f2),
+            side: BorderSide(color: _isDark ? const Color(0xff4a1515) : const Color(0xfffecaca)),
+            minimumSize: const Size(0, 44),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+      ),
+      const SizedBox(height: 10),
+      const Center(
+        child: Text(
+          'StaffHub Systems Inc. • Secure Staff Portal • v2.4.0',
+          style: TextStyle(fontSize: 10, color: Color(0xff94a3b8)),
+        ),
+      ),
+      const SizedBox(height: 20),
+    ]);
+  }
 }
 
 class _ScrollPage extends StatelessWidget {
@@ -7278,6 +10027,7 @@ class _ScrollPage extends StatelessWidget {
       });
 }
 
+// ignore: unused_element
 class _Card extends StatelessWidget {
   const _Card({required this.child});
   final Widget child;
@@ -7338,6 +10088,7 @@ Widget _timeline(IconData icon, String title, String subtitle, String time,
       ])),
       Text(time, style: TextStyle(fontSize: 10, color: _ink))
     ]);
+// ignore: unused_element
 Widget _smallLabel(String text, {Color? color}) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Text(text,
@@ -7384,27 +10135,28 @@ Widget _dateBox(
 Color _statusBackground(String status) {
   switch (status.toLowerCase()) {
     case 'approved':
-      return const Color(0xffe8f8ef);
+      return _isDark ? const Color(0xff0d2318) : const Color(0xffe8f8ef);
     case 'rejected':
     case 'denied':
-      return const Color(0xffffeeee);
+      return _isDark ? const Color(0xff2a0d0d) : const Color(0xffffeeee);
     default:
-      return const Color(0xfffff4d6);
+      return _isDark ? const Color(0xff2a2008) : const Color(0xfffff4d6);
   }
 }
 
 Color _statusForeground(String status) {
   switch (status.toLowerCase()) {
     case 'approved':
-      return const Color(0xff16834b);
+      return _isDark ? const Color(0xff34d399) : const Color(0xff16834b);
     case 'rejected':
     case 'denied':
-      return const Color(0xffd84747);
+      return _isDark ? const Color(0xfff87171) : const Color(0xffd84747);
     default:
-      return const Color(0xffb7791f);
+      return _isDark ? const Color(0xfffbbf24) : const Color(0xffb7791f);
   }
 }
 
+// ignore: unused_element
 Widget _profileStat(String title, String value) => Expanded(
         child: Column(children: [
       Text(title, style: TextStyle(fontSize: 11, color: _muted)),
@@ -7414,6 +10166,7 @@ Widget _profileStat(String title, String value) => Expanded(
               TextStyle(fontSize: 13, color: _ink, fontWeight: FontWeight.w700))
     ]));
 
+// ignore: unused_element
 class _InfoRow extends StatelessWidget {
   const _InfoRow(this.icon, this.title, this.value);
   final IconData icon;

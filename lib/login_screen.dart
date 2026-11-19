@@ -27,7 +27,6 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
   final _passwordCtrl = TextEditingController();
   bool _hidePassword  = true;
   bool _busy          = false;
-  bool _rememberMe    = false;
   String _workMode    = 'Office';
 
   @override
@@ -106,11 +105,11 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
   Widget _wideLayout() {
     return Center(
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 920, maxHeight: 620),
+        constraints: const BoxConstraints(maxWidth: 940, maxHeight: 620),
         margin: const EdgeInsets.all(32),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(28),
           boxShadow: const [
             BoxShadow(color: Color(0x14000000), blurRadius: 40, offset: Offset(0, 8)),
           ],
@@ -122,8 +121,8 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
               flex: 10,
               child: ClipRRect(
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  bottomLeft: Radius.circular(20),
+                  topLeft: Radius.circular(28),
+                  bottomLeft: Radius.circular(28),
                 ),
                 child: _formPanel(),
               ),
@@ -131,12 +130,12 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
             // ── Right gradient panel ──
             Expanded(
               flex: 9,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.only(
-                  topRight: Radius.circular(20),
-                  bottomRight: Radius.circular(20),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: _gradientPanel(),
                 ),
-                child: _gradientPanel(),
               ),
             ),
           ],
@@ -178,16 +177,37 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // ── Top bar: logo left, language right ──
+        // ── Top bar: Back button + StaffHub Logo ──
         Row(
           children: [
+            // Back button
+            InkWell(
+              key: const ValueKey('login_back_button'),
+              onTap: _handleBack,
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white,
+                  border: Border.all(color: _border),
+                ),
+                child: const Icon(
+                  Icons.chevron_left_rounded,
+                  size: 20,
+                  color: _ink,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
             // Logo
             Container(
               width: 32,
               height: 32,
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: _blue,
-                borderRadius: BorderRadius.circular(8),
+                shape: BoxShape.circle,
               ),
               child: const Icon(Icons.shield_outlined, color: Colors.white, size: 18),
             ),
@@ -195,37 +215,6 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
             const Text(
               'StaffHub',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
-            ),
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: const Color(0xffe9f0ff),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text(
-                'HRMS',
-                style: TextStyle(fontSize: 10, color: _blue, fontWeight: FontWeight.w700, letterSpacing: 0.4),
-              ),
-            ),
-            const Spacer(),
-            // Language selector
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                border: Border.all(color: _border),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.language_outlined, size: 15, color: _muted),
-                  SizedBox(width: 4),
-                  Text('EN', style: TextStyle(fontSize: 13, color: _ink, fontWeight: FontWeight.w500)),
-                  SizedBox(width: 2),
-                  Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: _muted),
-                ],
-              ),
             ),
           ],
         ),
@@ -317,35 +306,7 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
             ),
           ),
         ),
-        const SizedBox(height: 14),
-
-        // ── Remember me + Forgot password ──
-        Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: Checkbox(
-                value: _rememberMe,
-                onChanged: (v) => setState(() => _rememberMe = v ?? false),
-                side: const BorderSide(color: Color(0xffcbd5e1)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text('Remember me', style: TextStyle(fontSize: 13, color: _ink)),
-            const Spacer(),
-            GestureDetector(
-              onTap: () {},
-              child: const Text(
-                'Forgot password?',
-                style: TextStyle(fontSize: 13, color: _blue, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 24),
 
         // ── Login button ──
         SizedBox(

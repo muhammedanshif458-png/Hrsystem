@@ -19,17 +19,44 @@ class _StaffHubAppState extends State<StaffHubApp> {
   ThemeMode _themeMode = ThemeMode.light;
 
   @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final saved = await TokenStorage.getThemeMode();
+    if (saved != null && mounted) {
+      final mode = switch (saved) {
+        'dark' => ThemeMode.dark,
+        'system' => ThemeMode.system,
+        _ => ThemeMode.light,
+      };
+      setState(() {
+        _themeMode = mode;
+        staffHubThemeMode = mode;
+      });
+    }
+  }
+
+  void _onThemeChanged(ThemeMode mode) {
+    setState(() {
+      _themeMode = mode;
+      staffHubThemeMode = mode;
+    });
+    TokenStorage.saveThemeMode(mode.name);
+  }
+
+  @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'StaffHub',
         debugShowCheckedModeBanner: false,
-        themeMode: ThemeMode.light,
+        themeMode: _themeMode,
         theme: staffHubThemeData(ThemeMode.light),
+        darkTheme: staffHubThemeData(ThemeMode.dark),
         home: _AppPages(
           themeMode: _themeMode,
-          onThemeModeChanged: (themeMode) => setState(() {
-            _themeMode = themeMode;
-            staffHubThemeMode = themeMode;
-          }),
+          onThemeModeChanged: _onThemeChanged,
         ),
       );
 }
