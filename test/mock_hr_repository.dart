@@ -234,6 +234,8 @@ class MockHRRepository implements HRRepository {
     required String toDate,
     required String reason,
     String type = 'Casual Leave',
+    String durationType = 'FULL_DAY',
+    String? halfDaySession,
     String? documentName,
     String? documentUrl,
     Uint8List? documentBytes,

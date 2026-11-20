@@ -59,6 +59,8 @@ abstract class HRRepository {
       required String toDate,
       required String reason,
       String type = 'Casual Leave',
+      String durationType = 'FULL_DAY',
+      String? halfDaySession,
       String? documentName,
       String? documentUrl,
       Uint8List? documentBytes});
@@ -1075,6 +1077,8 @@ class HRRepositoryImpl implements HRRepository {
       required String toDate,
       required String reason,
       String type = 'Casual Leave',
+      String durationType = 'FULL_DAY',
+      String? halfDaySession,
       String? documentName,
       String? documentUrl,
       Uint8List? documentBytes}) async {
@@ -1093,6 +1097,8 @@ class HRRepositoryImpl implements HRRepository {
           'startDate': start,
           'endDate': end,
           'reason': reason.trim(),
+          'durationType': durationType,
+          'halfDaySession': halfDaySession,
         };
         if (documentName != null && documentName.isNotEmpty) {
           fields['documentName'] = documentName;
@@ -1116,6 +1122,8 @@ class HRRepositoryImpl implements HRRepository {
           'startDate': start,
           'endDate': end,
           'reason': reason.trim(),
+          'durationType': durationType,
+          'halfDaySession': halfDaySession,
         };
         if (documentName != null) body['documentName'] = documentName;
         if (documentUrl != null) body['documentUrl'] = documentUrl;

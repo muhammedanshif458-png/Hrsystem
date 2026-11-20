@@ -484,6 +484,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
           searchOpen: _chatSearchOpen,
           staff: widget.staff,
           repository: widget.repository,
+          onBack: _popSettingsSubPage,
         ),
       3 => _NotificationsPage(
           chatNotifications: _chatNotifications,
@@ -616,7 +617,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
                   // Desktop Header Row
                   Row(
                     children: [
-                      if (widget.pageIndex == 3 && _settingsSubPage != null)
+                      if (widget.pageIndex == 3 && _settingsSubPage != null && _settingsSubPage != 2)
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: IconButton(
@@ -668,17 +669,20 @@ class _StaffHubShellState extends State<StaffHubShell> {
                       ),
                       const SizedBox(width: 12),
                       // Chat button
-                      GestureDetector(
-                        onTap: _openChat,
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: _surface,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: _line),
+                      Tooltip(
+                        message: 'Open chat',
+                        child: GestureDetector(
+                          onTap: _openChat,
+                          child: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: _surface,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: _line),
+                            ),
+                            child: Icon(Icons.chat_bubble_outline_rounded, size: 18, color: _ink),
                           ),
-                          child: Icon(Icons.chat_bubble_outline_rounded, size: 18, color: _ink),
                         ),
                       ),
                       const SizedBox(width: 14),
@@ -4606,6 +4610,8 @@ class _LeavePage extends StatefulWidget {
 
 class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
   String _type = 'Casual Leave';
+  String _durationType = 'FULL_DAY';
+  String? _halfDaySession;
   DateTime _startDate = DateTime.now();
   DateTime _endDate = DateTime.now();
   String? _medicalProofName;
@@ -4776,6 +4782,18 @@ class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
             content: Text('Reason must be between 5 and 500 characters.')));
         return;
       }
+      if (_durationType == 'HALF_DAY') {
+        if (!_startDate.isAtSameMomentAs(_endDate)) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Half-day leave must be for a single date.')));
+          return;
+        }
+        if (_halfDaySession == null) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Select a half-day session.')));
+          return;
+        }
+      }
       if (_type == 'Medical Leave') {
         final hasProof =
             (_medicalProofBytes != null && _medicalProofBytes!.isNotEmpty) ||
@@ -4804,6 +4822,8 @@ class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
             '${_endDate.year}-${_endDate.month.toString().padLeft(2, '0')}-${_endDate.day.toString().padLeft(2, '0')}',
         reason: _reasonController.text.trim(),
         type: _type,
+        durationType: _durationType,
+        halfDaySession: _durationType == 'HALF_DAY' ? _halfDaySession : null,
         documentName: hasAttachment ? _medicalProofName : null,
         documentBytes: hasAttachment ? _medicalProofBytes : null,
       );
@@ -4831,6 +4851,8 @@ class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
       // Reset form ONLY on success
       setState(() {
         _type = 'Casual Leave';
+        _durationType = 'FULL_DAY';
+        _halfDaySession = null;
         _startDate = DateTime.now();
         _endDate = DateTime.now();
         _reasonController.clear();
@@ -5397,6 +5419,22 @@ class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
                     ),
                   ],
                   const SizedBox(height: 18),
+                  const Text('LEAVE DURATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5, color: Color(0xff64748B))),
+                  const SizedBox(height: 8),
+                  Wrap(spacing: 8, children: [
+                    ChoiceChip(label: const Text('Full Day'), selected: _durationType == 'FULL_DAY', onSelected: (_) => setState(() { _durationType = 'FULL_DAY'; _halfDaySession = null; })),
+                    ChoiceChip(label: const Text('Half Day'), selected: _durationType == 'HALF_DAY', onSelected: (_) => setState(() { _durationType = 'HALF_DAY'; _endDate = _startDate; })),
+                  ]),
+                  if (_durationType == 'HALF_DAY') ...[
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: _halfDaySession,
+                      decoration: _fieldDecoration(textColor: textColor, hintColor: mutedColor, borderColor: borderColor, fillColor: _fieldBg, hint: 'Select session'),
+                      items: const [DropdownMenuItem(value: 'FORENOON', child: Text('Forenoon (Morning)')), DropdownMenuItem(value: 'AFTERNOON', child: Text('Afternoon (After Lunch)'))],
+                      onChanged: (value) => setState(() => _halfDaySession = value),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
                   // DURATION label and badge
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -5417,7 +5455,7 @@ class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          '$_leaveDays ${_leaveDays == 1 ? 'Day' : 'Days'}',
+                          _durationType == 'HALF_DAY' ? '0.5 Day' : '$_leaveDays ${_leaveDays == 1 ? 'Day' : 'Days'}',
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -5451,6 +5489,7 @@ class _LeavePageState extends State<_LeavePage> with WidgetsBindingObserver {
                         ),
                       );
 
+                      if (_durationType == 'HALF_DAY') return startBox;
                       if (isNarrow) {
                         return Column(
                           children: [
@@ -6452,11 +6491,13 @@ class _ChatPage extends StatefulWidget {
     required this.searchOpen,
     required this.staff,
     required this.repository,
+    this.onBack,
   });
 
   final bool searchOpen;
   final Staff staff;
   final HRRepository repository;
+  final VoidCallback? onBack;
 
   @override
   State<_ChatPage> createState() => _ChatPageState();
@@ -6466,6 +6507,11 @@ class _ChatPageState extends State<_ChatPage> {
   final ScrollController _messagesScrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _composerController = TextEditingController();
+  final TextEditingController _emojiSearchController = TextEditingController();
+
+  bool _showEmojiPicker = false;
+  int _selectedCategoryIndex = 0;
+  int _emojiTab = 0; // 0: Emoji, 1: GIF, 2: Stickers
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -6473,7 +6519,6 @@ class _ChatPageState extends State<_ChatPage> {
   bool _hasMoreHistory = true;
   int _historyPage = 1;
   bool _loadingHistory = false;
-  final List<String> _recentEmojis = [];
   Timer? _searchDebounce;
   List<StaffChatMessage> _searchResults = [];
   bool _searchLoading = false;
@@ -6497,11 +6542,178 @@ class _ChatPageState extends State<_ChatPage> {
   void Function()? _removeReconnectListener;
   void Function()? _removeConnectionListener;
   VoidCallback? _repoListener;
+  VoidCallback? _staffListListener;
+
+  static const List<String> _categoryNames = [
+    'Smileys & People',
+    'Animals & Nature',
+    'Food & Drink',
+    'Activities',
+    'Travel & Places',
+    'Objects',
+    'Symbols',
+    'Flags',
+  ];
+
+  static const List<IconData> _categoryIcons = [
+    Icons.sentiment_satisfied_alt,
+    Icons.pets,
+    Icons.restaurant,
+    Icons.sports_soccer,
+    Icons.flight,
+    Icons.lightbulb_outline,
+    Icons.category_outlined,
+    Icons.flag_outlined,
+  ];
+
+  static const Map<String, List<String>> _categoryEmojis = {
+    'Smileys & People': [
+      '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣',
+      '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰',
+      '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜',
+      '🤪', '🤨', '🧐', '🤓', '😎', '🥸', '🤩', '🥳',
+      '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '😣',
+      '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠',
+      '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨',
+      '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥',
+      '👍', '👎', '👏', '🙌', '👐', '🤲', '🤝', '🙏',
+      '❤️', '💖', '✨', '🔥', '🎉', '👋', '✌️', '🤞',
+    ],
+    'Animals & Nature': [
+      '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
+      '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔',
+      '🐧', '🐦', '🐤', '🦆', '🦅', '🦉', '🦇', '🐺',
+      '🌸', '🌻', '🌹', '🌷', '🌺', '🌼', '💐', '🌳',
+      '🌲', '🌴', '🌱', '🌿', '🍀', '🍁', '🍂', '🍃',
+      '🌈', '☀️', '🌤', '⛅️', '☁️', '🌧', '⛈', '❄️',
+    ],
+    'Food & Drink': [
+      '🍏', '🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇',
+      '🍓', '🫐', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥',
+      '🥝', '🍅', '🥑', '🥦', '🌽', '🥕', '🥔', '🥐',
+      '🍕', '🍔', '🍟', '🌭', '🥪', '🌮', '🌯', '🍜',
+      '🍣', '🍱', '🍦', '🍧', '🍰', '🎂', '🍩', '🍪',
+      '☕️', '🫖', '🍵', '🧃', '🥤', '🧋', '🍺', '🍷',
+    ],
+    'Activities': [
+      '⚽️', '🏀', '🏈', '⚾️', '🥎', '🎾', '🏐', '🏉',
+      '🥏', '🎱', '🪀', '🏓', '🏸', '🏒', '🏏', '⛳️',
+      '🥊', '🥋', '🛹', '🛼', '🏋️', '🤸', '🧘', '🏊',
+      '🏆', '🥇', '🥈', '🥉', '🏅', '🎖', '🎫', '🎟',
+      '🎮', '🕹', '🎲', '🧩', '🎨', '🎬', '🎤', '🎧',
+    ],
+    'Travel & Places': [
+      '🚗', '🚕', '🚙', '🚌', '🚎', '🏎', '🚓', '🚑',
+      '🚒', '🚐', '🛻', '🚚', '🚛', '🚜', '🛵', '🏍',
+      '🚲', '🛴', '🚨', '🚔', '✈️', '🛫', '🛬', '🚀',
+      '🛸', '🚁', '⛵️', '🚤', '🛳', '🚢', '⚓️', '⛽️',
+      '🏠', '🏡', '🏢', '🏬', '🏥', '🏦', '🏨', '🏰',
+      '🗽', '🗼', '⛺️', '🏕', '🌋', '🗻', '🏖', '🌍',
+    ],
+    'Objects': [
+      '⌚️', '📱', '📲', '💻', '⌨️', '🖥', '🖨', '🖱',
+      '🕹', '💾', '💿', '📀', '📷', '📸', '📹', '🎥',
+      '📞', '☎️', '📺', '📻', '🎙', '💡', '🔦', '🕯',
+      '💸', '💵', '💰', '💳', '💎', '🔑', '🗝', '📦',
+      '✏️', '✒️', '🖊', '🖌', '📝', '📚', '📖', '📌',
+    ],
+    'Symbols': [
+      '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
+      '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖',
+      '💘', '💝', '💟', '☮️', '✝️', '☯️', '⚛️', '☣️',
+      '⚠️', '♻️', '✅', '❌', '⭕️', '🛑', '⛔️', '💯',
+      '🔔', '🔕', '💬', '💭', '🗯', '➕', '➖', '✖️',
+      '➡️', '⬅️', '⬆️', '⬇️', '⭐️', '🌟', '✨', '⚡️',
+    ],
+    'Flags': [
+      '🏁', '🚩', '🎌', '🏴', '🏳️', '🏳️‍🌈', '🏴‍☠️', '🇮🇳',
+      '🇺🇸', '🇬🇧', '🇨🇦', '🇦🇺', '🇯🇵', '🇩🇪', '🇫🇷', '🇮🇹',
+      '🇪🇸', '🇧🇷', '🇷🇺', '🇨🇳', '🇰🇷', '🇿🇦', '🇦🇪', '🇸🇬',
+    ],
+  };
+
+  static const Map<String, String> _emojiKeywords = {
+    '😀': 'grinning happy smile face',
+    '😃': 'smiling happy face',
+    '😄': 'smile happy face',
+    '😁': 'grin happy smile',
+    '😆': 'laugh funny smile',
+    '😅': 'sweat laugh relief smile',
+    '😂': 'tears joy laugh funny smile',
+    '🤣': 'rofl laugh funny smile',
+    '😊': 'blush smile happy',
+    '😇': 'angel halo smile',
+    '🙂': 'smile happy',
+    '🙃': 'upside down silly',
+    '😉': 'wink smile',
+    '😌': 'relieved smile',
+    '😍': 'love heart eyes',
+    '🥰': 'love hearts smile',
+    '😘': 'kiss love heart',
+    '😋': 'yum delicious tongue smile',
+    '😎': 'cool sunglasses',
+    '🤔': 'think question ponder',
+    '😭': 'cry sad tears sob',
+    '👍': 'thumbs up yes good like agree',
+    '👎': 'thumbs down no bad dislike',
+    '👏': 'clap applause hands',
+    '🙌': 'celebrate praise hands hooray',
+    '🤝': 'handshake deal agree',
+    '❤️': 'heart love red',
+    '💖': 'sparkle heart love',
+    '✨': 'sparkles star shine',
+    '🔥': 'fire hot flame',
+    '🎉': 'party celebration confetti tada',
+    '🐶': 'dog puppy pet animal',
+    '🐱': 'cat kitten pet animal',
+    '🐰': 'rabbit bunny pet animal',
+    '🦊': 'fox animal',
+    '🐻': 'bear animal',
+    '🐼': 'panda animal',
+    '🐸': 'frog animal',
+    '🌸': 'flower blossom nature',
+    '🌻': 'sunflower nature',
+    '🌳': 'tree nature',
+    '🌈': 'rainbow weather nature',
+    '☀️': 'sun sunny weather',
+    '🍎': 'apple fruit food red',
+    '🍕': 'pizza food fast',
+    '🍔': 'burger food fast',
+    '🍟': 'fries food fast',
+    '🍰': 'cake dessert sweet',
+    '☕️': 'coffee drink tea cafe',
+    '⚽️': 'soccer football sport ball',
+    '🏀': 'basketball sport ball',
+    '🎾': 'tennis sport ball',
+    '🏆': 'trophy winner prize gold',
+    '🎮': 'game controller gaming video',
+    '🚗': 'car drive automobile vehicle',
+    '✈️': 'airplane flight travel plane',
+    '🚀': 'rocket space launch ship',
+    '🏠': 'house home building',
+    '🌍': 'earth world globe planet',
+    '📱': 'phone mobile smartphone',
+    '💻': 'computer laptop tech work',
+    '💡': 'light idea bulb',
+    '📚': 'books read school study',
+    '🎁': 'gift present surprise box',
+    '✅': 'check done yes tick correct',
+    '❌': 'cross no wrong cancel',
+    '⭐': 'star favorite gold',
+    '📌': 'pin pushpin note',
+    '💬': 'chat speech bubble message',
+    '🇮🇳': 'india flag in',
+    '🇺🇸': 'united states usa flag us',
+    '🇬🇧': 'united kingdom uk flag gb',
+  };
 
   @override
   void initState() {
     super.initState();
     _messagesScrollController.addListener(_loadOlderMessages);
+    _composerController.addListener(_onComposerChanged);
+    _emojiSearchController.addListener(_onEmojiSearchChanged);
+
     _repoListener = () {
       if (mounted) {
         if (widget.repository.departmentChatMessages.value.isEmpty) {
@@ -6512,21 +6724,27 @@ class _ChatPageState extends State<_ChatPage> {
       }
     };
     widget.repository.departmentChatMessages.addListener(_repoListener!);
+
+    _staffListListener = () {
+      if (mounted) setState(() {});
+    };
+    widget.repository.staffList.addListener(_staffListListener!);
+
     _loadMessages();
     _initSocket();
+  }
+
+  void _onComposerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onEmojiSearchChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void didUpdateWidget(covariant _ChatPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.searchOpen && !widget.searchOpen) {
-      _searchController.clear();
-      _searchResults = [];
-      _searchError = null;
-      _searchLoading = false;
-      _searchHasMore = false;
-      _searchDebounce?.cancel();
-    }
     if (oldWidget.staff.department != widget.staff.department) {
       _historyPage = 1;
       _hasMoreHistory = true;
@@ -6543,18 +6761,22 @@ class _ChatPageState extends State<_ChatPage> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _messagesScrollController.dispose();
+    _searchController.dispose();
+    _composerController.dispose();
+    _emojiSearchController.dispose();
+
     if (_repoListener != null) {
       widget.repository.departmentChatMessages.removeListener(_repoListener!);
+    }
+    if (_staffListListener != null) {
+      widget.repository.staffList.removeListener(_staffListListener!);
     }
     _removeMessageListener?.call();
     _removeDeleteListener?.call();
     _removeReconnectListener?.call();
     _removeConnectionListener?.call();
     StaffChatSocketService().leaveDepartment();
-
-    _messagesScrollController.dispose();
-    _searchController.dispose();
-    _composerController.dispose();
     super.dispose();
   }
 
@@ -6780,7 +7002,6 @@ class _ChatPageState extends State<_ChatPage> {
 
     try {
       _composerController.clear();
-      _searchController.clear();
       await widget.repository.sendDepartmentMessage(
         text,
         departmentKey: _profileDepartment,
@@ -6812,50 +7033,93 @@ class _ChatPageState extends State<_ChatPage> {
     if (timestamp.month == 9 && timestamp.day == 24) {
       return 'Today, 24 Sep';
     }
-    final now = DateTime.now();
-    final isToday = timestamp.year == now.year &&
-        timestamp.month == now.month &&
-        timestamp.day == now.day;
     const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
+      'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+      'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
     ];
     final monthStr = months[timestamp.month - 1];
-    if (isToday) {
-      return 'Today, ${timestamp.day} $monthStr';
-    }
     return '${timestamp.day} $monthStr ${timestamp.year}';
   }
 
-  Widget _sentMessage(StaffChatMessage message) => Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-            margin: const EdgeInsets.only(top: 9),
-            padding: const EdgeInsets.all(10),
-            constraints: const BoxConstraints(maxWidth: 270),
-            decoration: BoxDecoration(
-                color: _blue, borderRadius: BorderRadius.circular(12)),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text(message.text,
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 12, height: 1.4)),
-              const SizedBox(height: 4),
-              Text('${message.formattedTime}  ${message.isRead ? '✓✓' : '✓'}',
-                  style:
-                      const TextStyle(color: Color(0xffdce8ff), fontSize: 10))
-            ])),
-      );
+  String _getInitials(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return 'ST';
+    final parts = trimmed.split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return parts[0].substring(0, parts[0].length.clamp(1, 2)).toUpperCase();
+  }
+
+  void _insertEmoji(String emoji) {
+    final value = _composerController.value;
+    final start =
+        value.selection.start < 0 ? value.text.length : value.selection.start;
+    final end = value.selection.end < 0 ? start : value.selection.end;
+    final text = value.text.replaceRange(start, end, emoji);
+    _composerController.value = value.copyWith(
+      text: text,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+    setState(() {
+      _showEmojiPicker = false;
+    });
+  }
+
+  List<String> _getFilteredEmojis() {
+    final query = _emojiSearchController.text.trim().toLowerCase();
+    if (query.isNotEmpty) {
+      final all = _categoryEmojis.values.expand((list) => list).toSet().toList();
+      return all.where((emoji) {
+        final kw = _emojiKeywords[emoji];
+        return (kw != null && kw.contains(query)) || emoji.contains(query);
+      }).toList();
+    }
+    final category = _categoryNames[_selectedCategoryIndex.clamp(0, _categoryNames.length - 1)];
+    return _categoryEmojis[category] ?? [];
+  }
+
+  List<Staff> _getDepartmentMembers() {
+    final list = widget.repository.staffList.value;
+    final deptKey = _departmentKey;
+    final membersMap = <String, Staff>{};
+
+    for (final s in list) {
+      final sDeptKey = canonicalDepartmentKey(s.department);
+      final isHr = s.role == Role.hrManager || s.role.toLowerCase().contains('admin');
+      if (sDeptKey == deptKey || isHr) {
+        final key = s.id.isNotEmpty ? s.id : s.name;
+        membersMap[key] = s;
+      }
+    }
+
+    final currentStaff = widget.staff;
+    if (currentStaff.name.isNotEmpty) {
+      final key = currentStaff.id.isNotEmpty ? currentStaff.id : currentStaff.name;
+      if (!membersMap.containsKey(key)) {
+        membersMap[key] = currentStaff;
+      }
+    }
+
+    if (membersMap.isEmpty) {
+      membersMap[currentStaff.id.isNotEmpty ? currentStaff.id : 'me'] = currentStaff;
+    }
+
+    final members = membersMap.values.toList();
+    members.sort((a, b) {
+      final aHr = a.role == Role.hrManager || a.role.toLowerCase().contains('admin');
+      final bHr = b.role == Role.hrManager || b.role.toLowerCase().contains('admin');
+      if (aHr && !bHr) return -1;
+      if (!aHr && bHr) return 1;
+      final aMe = a.id == currentStaff.id;
+      final bMe = b.id == currentStaff.id;
+      if (aMe && !bMe) return -1;
+      if (!aMe && bMe) return 1;
+      return a.name.compareTo(b.name);
+    });
+
+    return members;
+  }
 
   Future<void> _showMessageActions(StaffChatMessage message) async {
     final action = await showModalBottomSheet<String>(
@@ -6917,159 +7181,817 @@ class _ChatPageState extends State<_ChatPage> {
     }
   }
 
-  Future<void> _showEmojiPicker() async {
-    const categories = <String, String>{
-      'Smileys & People':
-          '😀 😃 😄 😁 😆 😅 😂 🙂 🙃 😉 😊 😍 🥰 😎 🤔 😭 👋 👍 🙌 ❤️',
-      'Animals & Nature': '🐶 🐱 🐭 🐰 🦊 🐻 🐼 🐸 🐵 🐦 🌸 🌻 🌳 🍀 🌈 ☀️',
-      'Food & Drink': '🍎 🍊 🍋 🍇 🍉 🍓 🍒 🥑 🍕 🍔 🍟 🌮 🍜 🍰 ☕ 🧋',
-      'Activities': '⚽ 🏀 🏈 ⚾ 🎾 🏆 🎯 🎮 🎨 🎤 🎉 🎂',
-      'Travel & Places': '🚗 🚕 🚌 🚆 ✈️ 🚀 🚲 🏠 🏢 🏖️ 🏔️ 🌍',
-      'Objects': '⌚ 📱 💻 💡 📚 ✏️ 🔑 🎁 📌 🔔',
-      'Symbols': '❤️ 💯 ✅ ❌ ⭐ 🔥 💬 ➡️ ⚠️ ♻️',
-      'Flags': '🏳️ 🏴 🇺🇸 🇬🇧 🇮🇳 🇨🇦 🇦🇺 🇯🇵 🇫🇷 🇩🇪',
-    };
-    const emojiNames = <String, String>{
-      '😀': 'grinning happy smile face',
-      '😃': 'smiling happy face',
-      '😄': 'smile happy face',
-      '😁': 'grin happy',
-      '😆': 'laugh funny',
-      '😅': 'sweat laugh relief',
-      '😂': 'tears joy laugh funny',
-      '🙂': 'smile happy',
-      '🙃': 'upside down silly',
-      '😉': 'wink',
-      '😊': 'blush smile happy',
-      '😍': 'love heart eyes',
-      '🥰': 'love hearts',
-      '😎': 'cool sunglasses',
-      '🤔': 'think question',
-      '😭': 'cry sad tears',
-      '👋': 'wave hello goodbye',
-      '👍': 'thumbs up yes good',
-      '🙌': 'celebrate praise hands',
-      '❤️': 'heart love red',
-      '🐶': 'dog puppy',
-      '🐱': 'cat kitten',
-      '🐰': 'rabbit bunny',
-      '🦊': 'fox',
-      '🐻': 'bear',
-      '🐼': 'panda',
-      '🐸': 'frog',
-      '🌸': 'flower blossom',
-      '🌻': 'sunflower',
-      '🌳': 'tree nature',
-      '🌈': 'rainbow',
-      '☀️': 'sun sunny',
-      '🍎': 'apple fruit',
-      '🍕': 'pizza food',
-      '🍔': 'burger food',
-      '🍰': 'cake dessert',
-      '☕': 'coffee drink',
-      '⚽': 'football soccer sport',
-      '🏀': 'basketball sport',
-      '🏆': 'trophy winner',
-      '🎮': 'game controller',
-      '🎉': 'party celebration',
-      '🚗': 'car drive',
-      '✈️': 'airplane travel',
-      '🏠': 'house home',
-      '🌍': 'earth world',
-      '📱': 'phone mobile',
-      '💻': 'computer laptop',
-      '💡': 'idea light bulb',
-      '📚': 'books read',
-      '🎁': 'gift present',
-      '✅': 'check done yes',
-      '❌': 'cross no wrong',
-      '⭐': 'star favorite',
-      '🔥': 'fire hot',
-      '🇮🇳': 'india flag',
-      '🇺🇸': 'united states usa flag',
-      '🇬🇧': 'united kingdom uk flag',
-    };
-    var searchQuery = '';
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => StatefulBuilder(
-          builder: (context, refresh) => SafeArea(
-              child: SizedBox(
-                  height: 360,
-                  child: DefaultTabController(
-                      length: categories.length + 1,
-                      child: Column(children: [
-                        Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                            child: TextField(
-                                onChanged: (value) =>
-                                    refresh(() => searchQuery = value),
-                                decoration: const InputDecoration(
-                                    prefixIcon: Icon(Icons.search),
-                                    hintText: 'Search emojis',
-                                    isDense: true))),
-                        if (searchQuery.isNotEmpty)
-                          Expanded(
-                              child: _emojiGrid(
-                                  categories.values
-                                      .expand((value) => value.split(' '))
-                                      .toSet()
-                                      .where((emoji) =>
-                                          emojiNames[emoji]?.contains(
-                                                  searchQuery.toLowerCase()) ==
-                                              true ||
-                                          emoji.contains(searchQuery))
-                                      .toList(),
-                                  (emoji) => Navigator.pop(context, emoji)))
-                        else ...[
-                          const TabBar(isScrollable: true, tabs: [
-                            Tab(text: 'Recent'),
-                            Tab(text: 'Smileys'),
-                            Tab(text: 'Nature'),
-                            Tab(text: 'Food'),
-                            Tab(text: 'Activities'),
-                            Tab(text: 'Travel'),
-                            Tab(text: 'Objects'),
-                            Tab(text: 'Symbols'),
-                            Tab(text: 'Flags')
-                          ]),
-                          Expanded(
-                              child: TabBarView(children: [
-                            _emojiGrid(_recentEmojis,
-                                (emoji) => Navigator.pop(context, emoji)),
-                            ...categories.values.map((emojis) => _emojiGrid(
-                                emojis.split(' '),
-                                (emoji) => Navigator.pop(context, emoji))),
-                          ])),
-                        ],
-                      ]))))),
+  Widget _buildChatHeader(BuildContext context, int onlineCount) {
+    final deptTitle = _hasDepartment ? '$_departmentTitle Department' : 'Tech Department';
+    final deptBadge = _departmentKey.isNotEmpty ? _departmentKey.toUpperCase() : 'TECH';
+
+    return Container(
+      color: _surface,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Back',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(Icons.arrow_back, size: 20, color: _ink),
+            onPressed: widget.onBack ?? () => Navigator.of(context).maybePop(),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: const Color(0xFF111827),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: const Text(
+              '#',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        deptTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: _ink,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _isDark ? const Color(0xFF202D3D) : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: _line),
+                      ),
+                      child: Text(
+                        deptBadge,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                          color: _isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$onlineCount members online • Official channel',
+                  style: TextStyle(fontSize: 11, color: _muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Search input field
+          SizedBox(
+            width: 230,
+            height: 36,
+            child: TextField(
+              key: const ValueKey('chat-search'),
+              controller: _searchController,
+              onChanged: _onSearchChanged,
+              style: TextStyle(fontSize: 12, color: _ink),
+              decoration: InputDecoration(
+                prefixIcon: Icon(Icons.search, size: 16, color: _muted),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.close, size: 14, color: _muted),
+                        onPressed: () {
+                          _searchController.clear();
+                          _onSearchChanged('');
+                        },
+                      )
+                    : null,
+                hintText: 'Search ${_departmentKey.isNotEmpty ? _departmentKey.toLowerCase() : "tech"} chat...',
+                hintStyle: TextStyle(fontSize: 11.5, color: _muted),
+                isDense: true,
+                filled: true,
+                fillColor: _isDark ? const Color(0xFF172233) : const Color(0xFFF1F5F9),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: _line),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: _line),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: Color(0xFF3B82F6)),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Pinned messages',
+            icon: Icon(Icons.push_pin_outlined, size: 18, color: _muted),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No pinned messages in this channel.'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
-    if (selected == null) return;
-    _recentEmojis.remove(selected);
-    _recentEmojis.insert(0, selected);
-    if (_recentEmojis.length > 24) _recentEmojis.removeLast();
-    final value = _composerController.value;
-    final start =
-        value.selection.start < 0 ? value.text.length : value.selection.start;
-    final end = value.selection.end < 0 ? start : value.selection.end;
-    final text = value.text.replaceRange(start, end, selected);
-    _composerController.value = value.copyWith(
-        text: text,
-        selection: TextSelection.collapsed(offset: start + selected.length));
   }
 
-  Widget _emojiGrid(List<String> emojis, ValueChanged<String> onSelected) =>
-      GridView.count(
-          crossAxisCount: 8,
-          children: emojis
-              .map((emoji) => InkWell(
-                    onTap: () => onSelected(emoji),
-                    child: Center(
-                        child:
-                            Text(emoji, style: const TextStyle(fontSize: 26))),
-                  ))
-              .toList());
+  Widget _buildIncomingMessage(StaffChatMessage message) {
+    final isHr = message.isHR;
+    final initials = message.initials;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: isHr ? const Color(0xFFFECDD3) : const Color(0xFF111827),
+            child: Text(
+              initials,
+              style: TextStyle(
+                color: isHr ? const Color(0xFF9F1239) : Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      message.senderName.isNotEmpty ? message.senderName : 'Staff Member',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    if (isHr) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEE2E2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'HR',
+                          style: TextStyle(
+                            color: Color(0xFFDC2626),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 8),
+                    Text(
+                      message.formattedTime,
+                      style: TextStyle(fontSize: 11, color: _muted),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  decoration: BoxDecoration(
+                    color: _isDark ? const Color(0xFF1C2736) : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _line),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x08000000),
+                        blurRadius: 4,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      color: _ink,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOutgoingMessage(StaffChatMessage message) {
+    final deptBadge = canonicalDepartmentKey(_profileDepartment).isNotEmpty
+        ? canonicalDepartmentKey(_profileDepartment).toUpperCase()
+        : 'TECH';
+    final userName = widget.staff.name.isNotEmpty ? widget.staff.name : 'Rahul k';
+    final userInitials = _getInitials(userName);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(width: 48),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      message.formattedTime,
+                      style: TextStyle(fontSize: 11, color: _muted),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _isDark ? const Color(0xFF202D3D) : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: _line),
+                      ),
+                      child: Text(
+                        deptBadge,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w600,
+                          color: _isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'You ($userName)',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  decoration: BoxDecoration(
+                    color: _isDark ? const Color(0xFF202D3D) : const Color(0xFF111827),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x10000000),
+                        blurRadius: 4,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    message.text,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: const Color(0xFF111827),
+            child: Text(
+              userInitials,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmojiPickerPopup(BuildContext context) {
+    final filteredEmojis = _getFilteredEmojis();
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 320),
+        width: MediaQuery.sizeOf(context).width > 340 ? 320 : MediaQuery.sizeOf(context).width - 32,
+        height: 380,
+        decoration: BoxDecoration(
+          color: _isDark ? const Color(0xFF1C2736) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x18000000),
+              blurRadius: 20,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 10, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.sentiment_satisfied_alt, size: 16),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Emoji & Reactions',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close, size: 16, color: _muted),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => setState(() => _showEmojiPicker = false),
+                  ),
+                ],
+              ),
+            ),
+            // Category navigation row
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: List.generate(_categoryIcons.length, (idx) {
+                  final isSelected = _selectedCategoryIndex == idx;
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () {
+                      _emojiSearchController.clear();
+                      setState(() {
+                        _selectedCategoryIndex = idx;
+                      });
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        _categoryIcons[idx],
+                        size: 18,
+                        color: isSelected
+                            ? const Color(0xFF3B82F6)
+                            : (_isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B)),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+              ),
+            ),
+            // Search field
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+              child: TextField(
+                controller: _emojiSearchController,
+                style: TextStyle(fontSize: 12, color: _ink),
+                decoration: InputDecoration(
+                  prefixIcon: Icon(Icons.search, size: 16, color: _muted),
+                  hintText: 'Search emoji...',
+                  hintStyle: TextStyle(fontSize: 11.5, color: _muted),
+                  isDense: true,
+                  filled: true,
+                  fillColor: _isDark ? const Color(0xFF172233) : const Color(0xFFF1F5F9),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            // Category title / Section Header
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                child: Text(
+                  _emojiSearchController.text.trim().isNotEmpty
+                      ? 'SEARCH RESULTS (${filteredEmojis.length})'
+                      : _categoryNames[_selectedCategoryIndex.clamp(0, _categoryNames.length - 1)].toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: _muted,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ),
+            ),
+            // Emoji grid or tab view
+            Expanded(
+              child: _emojiTab != 0
+                  ? Center(
+                      child: Text(
+                        _emojiTab == 1 ? 'GIFs not available' : 'Stickers not available',
+                        style: TextStyle(fontSize: 12, color: _muted),
+                      ),
+                    )
+                  : (filteredEmojis.isEmpty
+                      ? Center(
+                          child: Text(
+                            'No emojis found',
+                            style: TextStyle(fontSize: 12, color: _muted),
+                          ),
+                        )
+                      : GridView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 8,
+                            mainAxisSpacing: 4,
+                            crossAxisSpacing: 4,
+                            childAspectRatio: 1,
+                          ),
+                          itemCount: filteredEmojis.length,
+                          itemBuilder: (context, idx) {
+                            final emoji = filteredEmojis[idx];
+                            return InkWell(
+                              borderRadius: BorderRadius.circular(6),
+                              onTap: () => _insertEmoji(emoji),
+                              child: Center(
+                                child: Text(
+                                  emoji,
+                                  style: const TextStyle(fontSize: 20),
+                                ),
+                              ),
+                            );
+                          },
+                        )),
+            ),
+            // Bottom tabs: Emoji, GIF, Stickers
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: _isDark ? const Color(0xFF172233) : const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: () => setState(() => _emojiTab = 0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _emojiTab == 0 ? const Color(0xFF111827) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          'Emoji',
+                          style: TextStyle(
+                            color: _emojiTab == 0 ? Colors.white : _muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => setState(() => _emojiTab = 1),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _emojiTab == 1 ? const Color(0xFF111827) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          'GIF',
+                          style: TextStyle(
+                            color: _emojiTab == 1 ? Colors.white : _muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => setState(() => _emojiTab = 2),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _emojiTab == 2 ? const Color(0xFF111827) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          'Stickers',
+                          style: TextStyle(
+                            color: _emojiTab == 2 ? Colors.white : _muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDepartmentMembersSidebar(BuildContext context, List<Staff> members) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          child: Text(
+            'DEPARTMENT MEMBERS (${members.length})',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: _muted,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: members.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final member = members[index];
+              final isHr = member.role == Role.hrManager || member.role.toLowerCase().contains('admin');
+              final isCurrentUser = member.id == widget.staff.id;
+              final isAway = member.status == Status.resigned || member.onLeaveToday;
+              final initials = _getInitials(member.name);
+
+              String subtitle;
+              if (isHr) {
+                subtitle = 'Global Administrator';
+              } else if (isCurrentUser) {
+                subtitle = member.department.isNotEmpty ? '${member.department} Specialist' : 'Tech Specialist';
+              } else if (isAway) {
+                subtitle = '${member.department.isNotEmpty ? member.department : "Tech"} • Away';
+              } else {
+                subtitle = '${member.department.isNotEmpty ? member.department : "Tech"} Department';
+              }
+
+              return Row(
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: isHr
+                            ? const Color(0xFFFECDD3)
+                            : (isAway ? const Color(0xFF334155) : const Color(0xFF111827)),
+                        child: Text(
+                          initials,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: isHr ? const Color(0xFF9F1239) : Colors.white,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 8.5,
+                          height: 8.5,
+                          decoration: BoxDecoration(
+                            color: isAway ? const Color(0xFF94A3B8) : const Color(0xFF10B981),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: _isDark ? const Color(0xFF1C2736) : Colors.white,
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                member.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: _ink,
+                                ),
+                              ),
+                            ),
+                            if (isHr) ...[
+                              const SizedBox(width: 5),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEE2E2),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: const Text(
+                                  'HR',
+                                  style: TextStyle(
+                                    color: Color(0xFFDC2626),
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildComposer(BuildContext context) {
+    final canSend = !_isSending && _hasDepartment && _composerController.text.trim().isNotEmpty;
+
+    return Container(
+      color: _surface,
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: _isDark ? const Color(0xFF172233) : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: _line),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Attachments not supported',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              icon: Icon(Icons.add_circle_outline, color: _muted, size: 20),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('File attachments are not currently supported by chat.'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 6),
+            IconButton(
+              tooltip: 'Choose emoji',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              icon: Icon(
+                Icons.sentiment_satisfied_alt_outlined,
+                color: _showEmojiPicker ? const Color(0xFF3B82F6) : _muted,
+                size: 20,
+              ),
+              onPressed: () {
+                setState(() {
+                  _showEmojiPicker = !_showEmojiPicker;
+                });
+              },
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                key: const ValueKey('chat-message-composer'),
+                controller: _composerController,
+                enabled: _hasDepartment,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _sendMessage(),
+                style: TextStyle(fontSize: 13, color: _ink),
+                decoration: InputDecoration(
+                  hintText: 'Message your department...',
+                  hintStyle: TextStyle(fontSize: 12.5, color: _muted),
+                  isDense: true,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: canSend
+                    ? const Color(0xFF111827)
+                    : (_isDark ? const Color(0xFF202D3D) : const Color(0xFFE2E8F0)),
+              ),
+              child: IconButton(
+                key: const ValueKey('chat-message-send'),
+                tooltip: 'Send message',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed: canSend ? _sendMessage : null,
+                icon: _isSending
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Icon(
+                        Icons.send_rounded,
+                        size: 15,
+                        color: canSend ? Colors.white : _muted,
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -7085,223 +8007,234 @@ class _ChatPageState extends State<_ChatPage> {
     final allMessages = searching ? _searchResults : historyMessages;
     final visibleMessages = allMessages;
 
-    return Column(children: [
-      if (widget.searchOpen)
-        Container(
-            color: _surface,
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: TextField(
-                key: const ValueKey('chat-search'),
-                controller: _searchController,
-                autofocus: true,
-                onChanged: _onSearchChanged,
-                decoration: InputDecoration(
-                    prefixIcon: Icon(Icons.search, size: 18, color: _muted),
-                    suffixIcon: _searchController.text.isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: 'Clear search',
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                            icon: Icon(Icons.close, size: 17, color: _muted)),
-                    hintText: 'Search messages',
-                    hintStyle: TextStyle(fontSize: 12, color: _muted),
-                    isDense: true,
-                    filled: true,
-                    fillColor: _fieldBg,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    border: OutlineInputBorder(
-                        borderSide: BorderSide.none,
-                        borderRadius: BorderRadius.circular(12))))),
-      Expanded(
-        child: (searching ? _searchLoading : _isLoading) && allMessages.isEmpty
-            ? const Center(child: CircularProgressIndicator())
-            : (searching ? _searchError : _errorMessage) != null &&
-                    allMessages.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          if (!_hasDepartment) ...[
-                            Text(
-                              'Department unavailable',
-                              key: const ValueKey(
-                                  'department-unavailable-heading'),
-                              style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: _ink),
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                          Icon(Icons.error_outline, size: 36, color: _muted),
-                          const SizedBox(height: 12),
-                          Text(
-                            searching ? _searchError! : _errorMessage!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 12, color: _muted),
-                          ),
-                          const SizedBox(height: 12),
-                          ElevatedButton.icon(
-                            onPressed: () => searching
-                                ? _runMessageSearch(query, reset: true)
-                                : _loadMessages(),
-                            icon: const Icon(Icons.refresh, size: 16),
-                            label: const Text('Retry'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _blue,
-                              foregroundColor: Colors.white,
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : ListView(
-                    controller: _messagesScrollController,
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+    final members = _getDepartmentMembers();
+    final onlineCount = members.where((m) => m.status == Status.active).length;
+
+    return Column(
+      children: [
+        // 1. Chat Header
+        _buildChatHeader(context, onlineCount),
+        Divider(height: 1, thickness: 1, color: _line),
+        // 2. Chat Body Row: Conversation Area + Department Members Sidebar
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Main Conversation Area
+              Expanded(
+                child: Container(
+                  color: _isDark ? const Color(0xFF111827) : const Color(0xFFF5F8FC),
+                  child: Stack(
                     children: [
-                      if (visibleMessages.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 32),
-                          child: Center(
-                            child: Text(
-                              searching
-                                  ? 'No messages found'
-                                  : 'No messages yet in $_departmentTitle',
-                              style: TextStyle(fontSize: 12, color: _muted),
-                            ),
-                          ),
-                        ),
-                      ...visibleMessages.asMap().entries.expand((entry) {
-                        final index = entry.key;
-                        final message = entry.value;
-                        final isNewDay = index == 0 ||
-                            visibleMessages[index - 1].timestamp.year !=
-                                message.timestamp.year ||
-                            visibleMessages[index - 1].timestamp.month !=
-                                message.timestamp.month ||
-                            visibleMessages[index - 1].timestamp.day !=
-                                message.timestamp.day;
-                        return <Widget>[
-                          if (isNewDay)
-                            Center(
-                                child: Padding(
-                                    padding: const EdgeInsets.only(top: 12),
-                                    child: _pill(
-                                        _formatDateHeader(message.timestamp),
-                                        _chip,
-                                        _muted))),
-                          GestureDetector(
-                            onLongPress: () => _showMessageActions(message),
-                            child: message.deletedForEveryone
-                                ? Padding(
-                                    key: ValueKey(
-                                        'deleted-message-${message.id}'),
-                                    padding: const EdgeInsets.all(12),
-                                    child: const Text(
-                                        'This message was deleted',
-                                        style: TextStyle(
-                                            color: Colors.grey,
-                                            fontStyle: FontStyle.italic)))
-                                : message.isSentBy(widget.staff)
-                                    ? _sentMessage(message)
-                                    : _message(
-                                        message.initials,
-                                        message.senderName,
-                                        message.text,
-                                        message.formattedTime,
-                                        isHR: message.isHR,
+                      Column(
+                        children: [
+                          Expanded(
+                            child: (searching ? _searchLoading : _isLoading) && allMessages.isEmpty
+                                ? const Center(child: CircularProgressIndicator())
+                                : (searching ? _searchError : _errorMessage) != null && allMessages.isEmpty
+                                    ? Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                                          child: Column(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              if (!_hasDepartment) ...[
+                                                Text(
+                                                  'Department unavailable',
+                                                  key: const ValueKey('department-unavailable-heading'),
+                                                  style: TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: _ink,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                              ],
+                                              Icon(Icons.error_outline, size: 36, color: _muted),
+                                              const SizedBox(height: 12),
+                                              Text(
+                                                searching ? _searchError! : _errorMessage!,
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(fontSize: 12, color: _muted),
+                                              ),
+                                              const SizedBox(height: 12),
+                                              ElevatedButton.icon(
+                                                onPressed: () => searching
+                                                    ? _runMessageSearch(query, reset: true)
+                                                    : _loadMessages(),
+                                                icon: const Icon(Icons.refresh, size: 16),
+                                                label: const Text('Retry'),
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: _blue,
+                                                  foregroundColor: Colors.white,
+                                                  visualDensity: VisualDensity.compact,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                    : ListView(
+                                        controller: _messagesScrollController,
+                                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                                        children: [
+                                          // Centered Encrypted channel banner
+                                          Center(
+                                            child: Container(
+                                              margin: const EdgeInsets.only(top: 4, bottom: 12),
+                                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                              decoration: BoxDecoration(
+                                                color: _isDark ? const Color(0xFF1E293B) : const Color(0xFFEEF2F6),
+                                                borderRadius: BorderRadius.circular(20),
+                                                border: Border.all(
+                                                  color: _isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+                                                ),
+                                              ),
+                                              constraints: BoxConstraints(
+                                                maxWidth: MediaQuery.sizeOf(context).width > 480
+                                                    ? 460
+                                                    : (MediaQuery.sizeOf(context).width - 32).clamp(100.0, 460.0),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.shield_outlined,
+                                                    size: 13,
+                                                    color: _isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                                                  ),
+                                                  const SizedBox(width: 7),
+                                                  Flexible(
+                                                    child: Text(
+                                                      'Encrypted channel restricted to ${_departmentTitle.isNotEmpty ? _departmentTitle : "Tech"} staff & HR Admins',
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w500,
+                                                        color: _isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
+                                                      ),
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          if (visibleMessages.isEmpty)
+                                            Padding(
+                                              padding: const EdgeInsets.only(top: 32),
+                                              child: Center(
+                                                child: Text(
+                                                  searching
+                                                      ? 'No messages found'
+                                                      : 'No messages yet in $_departmentTitle',
+                                                  style: TextStyle(fontSize: 12, color: _muted),
+                                                ),
+                                              ),
+                                            ),
+                                          ...visibleMessages.asMap().entries.expand((entry) {
+                                            final index = entry.key;
+                                            final message = entry.value;
+                                            final isNewDay = index == 0 ||
+                                                visibleMessages[index - 1].timestamp.year !=
+                                                    message.timestamp.year ||
+                                                visibleMessages[index - 1].timestamp.month !=
+                                                    message.timestamp.month ||
+                                                visibleMessages[index - 1].timestamp.day !=
+                                                    message.timestamp.day;
+                                            return <Widget>[
+                                              if (isNewDay)
+                                                Padding(
+                                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                                  child: Row(
+                                                    children: [
+                                                      Expanded(child: Divider(color: _line, thickness: 1)),
+                                                      Padding(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                                                        child: Container(
+                                                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                                                          decoration: BoxDecoration(
+                                                            color: _isDark ? const Color(0xFF202D3D) : const Color(0xFFF1F5F9),
+                                                            borderRadius: BorderRadius.circular(12),
+                                                            border: Border.all(color: _line),
+                                                          ),
+                                                          child: Text(
+                                                            _formatDateHeader(message.timestamp),
+                                                            style: TextStyle(
+                                                              fontSize: 10.5,
+                                                              fontWeight: FontWeight.w700,
+                                                              letterSpacing: 0.5,
+                                                              color: _muted,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      Expanded(child: Divider(color: _line, thickness: 1)),
+                                                    ],
+                                                  ),
+                                                ),
+                                              GestureDetector(
+                                                onLongPress: () => _showMessageActions(message),
+                                                child: message.deletedForEveryone
+                                                    ? Padding(
+                                                        key: ValueKey('deleted-message-${message.id}'),
+                                                        padding: const EdgeInsets.all(12),
+                                                        child: const Text(
+                                                          'This message was deleted',
+                                                          style: TextStyle(
+                                                            color: Colors.grey,
+                                                            fontStyle: FontStyle.italic,
+                                                          ),
+                                                        ),
+                                                      )
+                                                    : (message.isSentBy(widget.staff)
+                                                        ? _buildOutgoingMessage(message)
+                                                        : _buildIncomingMessage(message)),
+                                              ),
+                                            ];
+                                          }),
+                                          if (searching && _searchLoading)
+                                            const Padding(
+                                              padding: EdgeInsets.all(12),
+                                              child: Center(
+                                                child: SizedBox(
+                                                  width: 20,
+                                                  height: 20,
+                                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                                ),
+                                              ),
+                                            ),
+                                        ],
                                       ),
                           ),
-                        ];
-                      }),
-                      if (searching && _searchLoading)
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Center(
-                              child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2))),
+                          _buildComposer(context),
+                        ],
+                      ),
+                      // Floating Emoji Picker
+                      if (_showEmojiPicker)
+                        Positioned(
+                          left: 16,
+                          bottom: 68,
+                          child: _buildEmojiPickerPopup(context),
                         ),
                     ],
                   ),
-      ),
-      Container(
-          color: _surface,
-          padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
-          child: Row(children: [
-            IconButton(
-              tooltip: 'Attachments not supported',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              icon: Icon(Icons.add_circle_outline, color: _blue, size: 20),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                        'File attachments are not currently supported by chat.'),
-                    duration: Duration(seconds: 2),
+                ),
+              ),
+              // Department Members Sidebar (Desktop / Tablet >= 720)
+              if (MediaQuery.sizeOf(context).width >= 900)
+                Container(
+                  width: 250,
+                  decoration: BoxDecoration(
+                    color: _surface,
+                    border: Border(left: BorderSide(color: _line, width: 1)),
                   ),
-                );
-              },
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-                tooltip: 'Choose emoji',
-                onPressed: _showEmojiPicker,
-                icon: const Text('😀', style: TextStyle(fontSize: 20))),
-            Expanded(
-                child: TextField(
-                    key: const ValueKey('chat-message-composer'),
-                    controller: _composerController,
-                    enabled: _hasDepartment,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _sendMessage(),
-                    decoration: InputDecoration(
-                        hintText: 'Message your department...',
-                        hintStyle: TextStyle(fontSize: 12, color: _muted),
-                        isDense: true,
-                        filled: true,
-                        fillColor: _bg,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        border: OutlineInputBorder(
-                            borderSide: BorderSide.none,
-                            borderRadius: BorderRadius.circular(20))))),
-            const SizedBox(width: 8),
-            SizedBox(
-                width: 36,
-                height: 36,
-                child: IconButton(
-                    key: const ValueKey('chat-message-send'),
-                    tooltip: 'Send message',
-                    onPressed:
-                        _isSending || !_hasDepartment ? null : _sendMessage,
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    style: IconButton.styleFrom(
-                        backgroundColor: _blue, foregroundColor: Colors.white),
-                    icon: _isSending
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.send, size: 15)))
-          ])),
-    ]);
+                  child: _buildDepartmentMembersSidebar(context, members),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -10221,69 +11154,3 @@ class _SettingRow extends StatelessWidget {
             ])),
       );
 }
-
-Widget _message(String initials, String name, String text, String time,
-        {bool isHR = false}) =>
-    Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          CircleAvatar(
-              radius: 13,
-              backgroundColor:
-                  isHR ? const Color(0xfffee2e2) : const Color(0xffe6edfc),
-              child: Text(initials,
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: isHR ? const Color(0xffdc2626) : _blue,
-                      fontWeight: FontWeight.w700))),
-          const SizedBox(width: 7),
-          Expanded(
-              child: Container(
-                  padding: const EdgeInsets.all(9),
-                  decoration: BoxDecoration(
-                      color: _surface,
-                      border: Border.all(color: _line),
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Expanded(
-                              child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(name,
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: _ink),
-                                    overflow: TextOverflow.ellipsis),
-                              ),
-                              if (isHR) ...[
-                                const SizedBox(width: 5),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 4, vertical: 1),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xfffee2e2),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: const Text('HR',
-                                      style: TextStyle(
-                                          fontSize: 8,
-                                          fontWeight: FontWeight.w700,
-                                          color: Color(0xffdc2626))),
-                                ),
-                              ],
-                            ],
-                          )),
-                          Text(time,
-                              style: TextStyle(fontSize: 7, color: _muted))
-                        ]),
-                        const SizedBox(height: 4),
-                        Text(text,
-                            style: TextStyle(
-                                fontSize: 11, height: 1.35, color: _ink))
-                      ])))
-        ]));

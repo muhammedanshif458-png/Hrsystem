@@ -1433,7 +1433,8 @@ void main() {
       await tester.pumpAndSettle();
       final emojiSearch = find.byWidgetPredicate((widget) =>
           widget is TextField &&
-          widget.decoration?.hintText == 'Search emojis');
+          (widget.decoration?.hintText == 'Search emojis' ||
+              widget.decoration?.hintText == 'Search emoji...'));
       await tester.enterText(emojiSearch, 'smile');
       await tester.pumpAndSettle();
       await tester.tap(find.text('😊'));
