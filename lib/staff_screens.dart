@@ -11,6 +11,8 @@ import 'core/api/api_exception.dart';
 import 'core/utils/file_download.dart';
 import 'services/staff_chat_socket_service.dart';
 import 'storage/token_storage.dart';
+import 'date_time_utils.dart';
+export 'date_time_utils.dart' show getTimeBasedGreeting;
 
 const _blue = Color(0xff2864e8);
 ThemeMode staffHubThemeMode = ThemeMode.light;
@@ -553,7 +555,7 @@ class _StaffHubShellState extends State<StaffHubShell> {
         checkOutTime: _checkOutTime,
         onToggle: _togglePunch,
         attendance: _todayAttendance,
-        onToggleBreak: () => _toggleBreak(null),
+        onToggleBreak: _toggleBreak,
         isPunching: _isPunching,
         repository: widget.repository,
         department: widget.department,
@@ -847,6 +849,48 @@ class _StaffHubShellState extends State<StaffHubShell> {
                                       ),
                                     ),
                                   ],
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Material(
+                                color: Colors.transparent,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  key: const ValueKey('sidebar_logout_button'),
+                                  borderRadius: BorderRadius.circular(12),
+                                  hoverColor: _isDark
+                                      ? const Color(0xffef4444).withValues(alpha: 0.12)
+                                      : const Color(0xfffee2e2).withValues(alpha: 0.7),
+                                  splashColor: _isDark
+                                      ? const Color(0xffef4444).withValues(alpha: 0.2)
+                                      : const Color(0xfffecaca),
+                                  onTap: widget.onLogout,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.logout_rounded,
+                                          size: 18,
+                                          color: _isDark
+                                              ? const Color(0xfff87171)
+                                              : const Color(0xffdc2626),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(
+                                          'Logout',
+                                          style: TextStyle(
+                                            fontFamily: 'Plus Jakarta Sans',
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                            color: _isDark
+                                                ? const Color(0xfff87171)
+                                                : const Color(0xffdc2626),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],
@@ -1367,6 +1411,85 @@ class _BirthdayConfettiPainter extends CustomPainter {
       oldDelegate.progress != progress || oldDelegate.mirrored != mirrored;
 }
 
+Future<String?> _showChooseBreakBottomSheet({
+  required BuildContext context,
+  required Attendance? attendance,
+}) async {
+  if (attendance == null) return null;
+  return showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Choose a break',
+                  style: TextStyle(
+                      fontFamily: 'Plus Jakarta Sans',
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: _ink)),
+              const SizedBox(height: 6),
+              Text('You can start your break whenever you need it.',
+                  style: TextStyle(
+                      fontFamily: 'Plus Jakarta Sans',
+                      fontSize: 13,
+                      color: _muted)),
+              const SizedBox(height: 12),
+              for (var i = 0;
+                  i < AttendanceBreakSchedule.types.length;
+                  i++) ...[
+                Builder(builder: (context) {
+                  final type = AttendanceBreakSchedule.types[i];
+                  final item = attendance.breaks
+                      .where((b) =>
+                          b.breakType == type ||
+                          (type == 'tea_break_1' &&
+                              b.breakType == 'morning') ||
+                          (type == 'tea_break_2' &&
+                              b.breakType == 'afternoon'))
+                      .firstOrNull;
+                  final active = attendance.breaks.any((b) => b.isActive);
+                  final used = item?.isCompleted == true;
+                  final inProgress = item?.isActive == true;
+                  final disabled = used || active;
+                  final status = used
+                      ? 'Completed'
+                      : inProgress
+                          ? 'In Progress'
+                          : 'Available';
+                  return ListTile(
+                    leading: Icon(
+                        i == 1
+                            ? Icons.restaurant_outlined
+                            : Icons.coffee_outlined,
+                        color: disabled ? _muted : _blue),
+                    title: Text(AttendanceBreakSchedule.names[i],
+                        style: const TextStyle(
+                            fontFamily: 'Plus Jakarta Sans',
+                            fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                        '${AttendanceBreakSchedule.durationsMinutes[i]} minutes · $status',
+                        style: const TextStyle(
+                            fontFamily: 'Plus Jakarta Sans')),
+                    enabled: !disabled,
+                    onTap:
+                        disabled ? null : () => Navigator.pop(context, type),
+                  );
+                }),
+              ],
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class _HomePage extends StatefulWidget {
   const _HomePage(
       {required this.onPunch,
@@ -1419,6 +1542,7 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
   List<BirthdayEmployee> _todaysBirthdays = const [];
   bool _breakActionInFlight = false;
   String? _updateError;
+  String? _dismissedLeaveKey;
   late final Timer _activeTimeTimer;
 
   @override
@@ -1508,68 +1632,9 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
         _breakActionInFlight ||
         widget.isLoadingAttendance ||
         widget.attendanceError != null) return;
-    final selected = await showModalBottomSheet<String>(
+    final selected = await _showChooseBreakBottomSheet(
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Choose a break',
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: _ink)),
-                const SizedBox(height: 6),
-                Text('You can start your break whenever you need it.',
-                    style: TextStyle(fontSize: 13, color: _muted)),
-                const SizedBox(height: 12),
-                for (var i = 0;
-                    i < AttendanceBreakSchedule.types.length;
-                    i++) ...[
-                  Builder(builder: (context) {
-                    final type = AttendanceBreakSchedule.types[i];
-                    final item = attendance.breaks
-                        .where((b) =>
-                            b.breakType == type ||
-                            (type == 'tea_break_1' &&
-                                b.breakType == 'morning') ||
-                            (type == 'tea_break_2' &&
-                                b.breakType == 'afternoon'))
-                        .firstOrNull;
-                    final active = attendance.breaks.any((b) => b.isActive);
-                    final used = item?.isCompleted == true;
-                    final inProgress = item?.isActive == true;
-                    final disabled = used || active;
-                    final status = used
-                        ? 'Completed'
-                        : inProgress
-                            ? 'In Progress'
-                            : 'Available';
-                    return ListTile(
-                      leading: Icon(
-                          i == 1
-                              ? Icons.restaurant_outlined
-                              : Icons.coffee_outlined,
-                          color: disabled ? _muted : _blue),
-                      title: Text(AttendanceBreakSchedule.names[i]),
-                      subtitle: Text(
-                          '${AttendanceBreakSchedule.durationsMinutes[i]} minutes · $status'),
-                      enabled: !disabled,
-                      onTap:
-                          disabled ? null : () => Navigator.pop(context, type),
-                    );
-                  }),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
+      attendance: attendance,
     );
     if (selected == null || !mounted) return;
     setState(() => _breakActionInFlight = true);
@@ -1678,21 +1743,27 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
         ? 'Not checked out'
         : 'Checked out at ${TimeOfDay.fromDateTime(widget.checkOutTime!).format(context)}';
     final activeLeave = _displayLeaveRequest;
+    final isLeaveDismissed =
+        activeLeave != null && activeLeave.key == _dismissedLeaveKey;
     // "Working On-Schedule" logic: show when checked in, not late, not on break
     final workingOnSchedule = widget.checkedIn &&
         attendance?.isLate != true &&
         activeBreak == null;
     final dateString =
         '${const ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][now.weekday - 1]}, ${now.day} ${const ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][now.month - 1]}';
+    final greeting = getTimeBasedGreeting(now);
     return _ScrollPage(children: [
       const SizedBox(height: 12),
       Text(dateString, style: TextStyle(fontSize: 14, color: _muted)),
       const SizedBox(height: 5),
       Row(children: [
         Expanded(
-            child: Text('Good Morning, ${widget.staffName} 👋',
+            child: Text('$greeting, ${widget.staffName} 👋',
                 style: TextStyle(
-                    fontSize: 26, color: _ink, fontWeight: FontWeight.w800))),
+                    fontFamily: 'Plus Jakarta Sans',
+                    fontSize: 26,
+                    color: _ink,
+                    fontWeight: FontWeight.w800))),
       ]),
       const SizedBox(height: 4),
       RichText(
@@ -1768,7 +1839,7 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
       // ── Attendance Card (IMAGE 2 layout) ────────────────────────────
       _ProfileCard(
           child: LayoutBuilder(builder: (context, constraints) {
-            final isNarrow = constraints.maxWidth < 600;
+            final isNarrow = constraints.maxWidth < 700;
 
             final startBreakButton = OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
@@ -2216,7 +2287,7 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
                 ],
               ])),
       // ── Leave Request Update Card ────────────────────────────────────
-      if (activeLeave != null) ...[
+      if (activeLeave != null && !isLeaveDismissed) ...[
         const SizedBox(height: 18),
         Container(
             decoration: BoxDecoration(
@@ -2241,6 +2312,7 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
                     Expanded(
                         child: Text('Leave Request Update',
                             style: TextStyle(
+                                fontFamily: 'Plus Jakarta Sans',
                                 fontSize: 15,
                                 color: _ink,
                                 fontWeight: FontWeight.w700))),
@@ -2255,10 +2327,46 @@ class _HomePageState extends State<_HomePage> with WidgetsBindingObserver {
                             borderRadius: BorderRadius.circular(20)),
                         child: Text(activeLeave.status,
                             style: TextStyle(
+                                fontFamily: 'Plus Jakarta Sans',
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
                                 color: _statusForeground(
                                     activeLeave.status)))),
+                    const SizedBox(width: 8),
+                    InkWell(
+                      key: const ValueKey('leave_update_clear_button'),
+                      onTap: () => setState(
+                          () => _dismissedLeaveKey = activeLeave.key),
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _isDark
+                              ? const Color(0xff1e293b)
+                              : const Color(0xfff1f5f9),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _line),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.close_rounded,
+                                size: 13, color: _muted),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Clear',
+                              style: TextStyle(
+                                fontFamily: 'Plus Jakarta Sans',
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: _muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ]),
                   const SizedBox(height: 10),
                   Text('${activeLeave.type} · ${activeLeave.dates}',
@@ -2779,6 +2887,32 @@ class _EditWorkUpdatePageState extends State<_EditWorkUpdatePage> {
                               ],
                             ),
                           ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.logout_rounded,
+                                  size: 18,
+                                  color: _isDark ? const Color(0xfff87171) : const Color(0xffdc2626),
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  'Logout',
+                                  style: TextStyle(
+                                    fontFamily: 'Plus Jakarta Sans',
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: _isDark ? const Color(0xfff87171) : const Color(0xffdc2626),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -2838,7 +2972,7 @@ class _PunchPage extends StatefulWidget {
   final DateTime? checkOutTime;
   final VoidCallback onToggle;
   final Attendance? attendance;
-  final Future<void> Function() onToggleBreak;
+  final Future<void> Function(String? breakType) onToggleBreak;
   final List<Attendance> attendanceRecords;
   final bool isPunching;
   final HRRepository? repository;
@@ -2853,6 +2987,26 @@ class _PunchPage extends StatefulWidget {
 class _PunchPageState extends State<_PunchPage> {
   late final Timer _timer;
   bool _isClearingHistory = false;
+  bool _breakActionInFlight = false;
+
+  Future<void> _chooseAndStartBreak() async {
+    final attendance = widget.attendance;
+    if (attendance == null ||
+        !widget.checkedIn ||
+        _breakActionInFlight ||
+        widget.isPunching) return;
+    final selected = await _showChooseBreakBottomSheet(
+      context: context,
+      attendance: attendance,
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _breakActionInFlight = true);
+    try {
+      await widget.onToggleBreak(selected);
+    } finally {
+      if (mounted) setState(() => _breakActionInFlight = false);
+    }
+  }
 
   @override
   void initState() {
@@ -3213,7 +3367,7 @@ class _PunchPageState extends State<_PunchPage> {
       // ── A. Page Heading ───────────────────────────────────────
       LayoutBuilder(
         builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 620;
+          final isNarrow = constraints.maxWidth < 850;
           const heading = Text(
             "Today's Attendance",
             style: TextStyle(
@@ -3429,11 +3583,27 @@ class _PunchPageState extends State<_PunchPage> {
                 children: [
                   // Take a Break Button
                   ElevatedButton.icon(
-                    onPressed: !widget.checkedIn || widget.isPunching
+                    key: const ValueKey('punch_take_break_button'),
+                    onPressed: !widget.checkedIn ||
+                            widget.isPunching ||
+                            _breakActionInFlight
                         ? null
-                        : widget.onToggleBreak,
+                        : activeBreak != null
+                            ? () async {
+                                setState(() => _breakActionInFlight = true);
+                                try {
+                                  await widget.onToggleBreak(null);
+                                } finally {
+                                  if (mounted)
+                                    setState(
+                                        () => _breakActionInFlight = false);
+                                }
+                              }
+                            : _chooseAndStartBreak,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _isDark ? const Color(0xff2a2008) : const Color(0xfffef3c7),
+                      backgroundColor: _isDark
+                          ? const Color(0xff2a2008)
+                          : const Color(0xfffef3c7),
                       foregroundColor: const Color(0xff92400e),
                       elevation: 0,
                       padding: const EdgeInsets.symmetric(
@@ -3450,8 +3620,13 @@ class _PunchPageState extends State<_PunchPage> {
                       color: const Color(0xff92400e),
                     ),
                     label: Text(
-                      activeBreak != null ? 'End Break' : 'Take a Break',
+                      _breakActionInFlight
+                          ? 'Please wait...'
+                          : activeBreak != null
+                              ? 'End Break'
+                              : 'Take a Break',
                       style: const TextStyle(
+                        fontFamily: 'Plus Jakarta Sans',
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: Color(0xff92400e),
@@ -4546,18 +4721,22 @@ String _formatDateString(String iso) {
 
 class _LeaveRequestInfo {
   const _LeaveRequestInfo(
-      {required this.type,
+      {this.id,
+      required this.type,
       required this.dates,
       required this.reason,
       this.documentName,
       this.documentPath,
       this.status = 'Pending'});
+  final String? id;
   final String type;
   final String dates;
   final String reason;
   final String? documentName;
   final String? documentPath;
   final String status;
+
+  String get key => '${id ?? dates}_${status.trim().toLowerCase()}';
 
   String get message {
     switch (status.trim().toLowerCase()) {
@@ -4584,6 +4763,7 @@ class _LeaveRequestInfo {
     final datesLabel = '$from – $to · $days ${days == 1 ? 'Day' : 'Days'}';
 
     return _LeaveRequestInfo(
+      id: req.id,
       type: req.type,
       dates: datesLabel,
       reason: req.reason,

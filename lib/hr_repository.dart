@@ -27,7 +27,7 @@ abstract class HRRepository {
   ValueNotifier<bool> get isFirebaseConnected;
 
   Future<Staff> signIn(String email, String password,
-      {String workMode = 'OFFICE'});
+      {String workMode = 'OFFICE', String? department});
   Future<void> recordStaffSignIn(StaffSignInRecord record);
   Future<void> switchUserDirect(Staff staff);
   void signOut();
@@ -306,7 +306,7 @@ class HRRepositoryImpl implements HRRepository {
 
   @override
   Future<Staff> signIn(String email, String password,
-      {String workMode = 'OFFICE'}) async {
+      {String workMode = 'OFFICE', String? department}) async {
     final trimmedEmail = email.trim().toLowerCase();
     final trimmedPassword = password.trim();
 
@@ -326,6 +326,8 @@ class HRRepositoryImpl implements HRRepository {
         'email': trimmedEmail,
         'password': trimmedPassword,
         'workMode': workMode,
+        if (department != null && department.trim().isNotEmpty)
+          'department': department.trim(),
       };
       final response = await _api.post(
         ApiConfig.login,
@@ -344,14 +346,6 @@ class HRRepositoryImpl implements HRRepository {
       if (data == null) {
         throw Exception('Malformed login response: missing data object.');
       }
-
-      final token = data['accessToken']?.toString() ?? '';
-      final refreshToken = data['refreshToken']?.toString();
-      if (token.isNotEmpty) {
-        await TokenStorage.saveTokens(token: token, refreshToken: refreshToken);
-      }
-      final savedWorkMode = _canonicalWorkMode(data['workMode'] ?? workMode);
-      await TokenStorage.saveWorkMode(savedWorkMode);
 
       final userMap = data['user'] as Map<String, dynamic>? ?? {};
       final rawRole = (userMap['role'] ?? '').toString().toUpperCase();
@@ -395,6 +389,33 @@ class HRRepositoryImpl implements HRRepository {
           .toString()
           .trim();
       final staffDept = rawDept;
+
+      // Department guard: Verify returned staff department matches selected department
+      if (department != null && department.trim().isNotEmpty) {
+        final selectedKey = canonicalDepartmentKey(department);
+        final userKey = canonicalDepartmentKey(staffDept);
+        final matches = (selectedKey.isNotEmpty && selectedKey == userKey) ||
+            staffDept.trim().toLowerCase() == department.trim().toLowerCase();
+        if (!matches) {
+          await TokenStorage.clearTokens();
+          final actualDept = userKey == 'tech'
+              ? 'Tech'
+              : (userKey == 'telecalling'
+                  ? 'Telecalling'
+                  : (staffDept.isNotEmpty ? staffDept : 'another'));
+          throw Exception(
+              'This account is registered under the $actualDept department. Please switch to the $actualDept workspace to sign in.');
+        }
+      }
+
+      // Only persist session and tokens after passing all guards
+      final token = data['accessToken']?.toString() ?? '';
+      final refreshToken = data['refreshToken']?.toString();
+      if (token.isNotEmpty) {
+        await TokenStorage.saveTokens(token: token, refreshToken: refreshToken);
+      }
+      final savedWorkMode = _canonicalWorkMode(data['workMode'] ?? workMode);
+      await TokenStorage.saveWorkMode(savedWorkMode);
 
       final staffStatus =
           (empMap?['status']?.toString().toUpperCase() == 'INACTIVE' ||
@@ -445,6 +466,16 @@ class HRRepositoryImpl implements HRRepository {
       return staff;
     } on ApiException catch (e) {
       if (e.statusCode == 401) {
+        final lower = e.message.toLowerCase();
+        if (lower.contains('department') ||
+            lower.contains('division') ||
+            lower.contains('workspace') ||
+            lower.contains('cannot sign in') ||
+            lower.contains('belongs to') ||
+            lower.contains('mismatch') ||
+            lower.contains('not authorized')) {
+          throw Exception(e.message);
+        }
         throw Exception('Invalid email or password.');
       } else if (e.statusCode == 403) {
         throw Exception(e.message);

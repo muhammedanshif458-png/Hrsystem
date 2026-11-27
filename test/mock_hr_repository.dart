@@ -87,12 +87,12 @@ class MockHRRepository implements HRRepository {
 
   @override
   Future<Staff> signIn(String email, String password,
-      {String workMode = 'OFFICE'}) async {
+      {String workMode = 'OFFICE', String? department}) async {
     return Staff(
         id: '1',
         name: 'Mock',
         email: email,
-        department: 'Tech',
+        department: department ?? 'Tech',
         role: Role.staff,
         status: Status.active);
   }
@@ -104,7 +104,9 @@ class MockHRRepository implements HRRepository {
   Future<void> switchUserDirect(Staff staff) async {}
 
   @override
-  void signOut() {}
+  void signOut() {
+    currentUser.value = null;
+  }
 
   @override
   Future<String> sendPasswordReset(String email) async => 'Sent';

@@ -28,15 +28,40 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
   bool _hidePassword  = true;
   bool _busy          = false;
   String _workMode    = 'Office';
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailCtrl.addListener(_clearError);
+    _passwordCtrl.addListener(_clearError);
+  }
+
+  @override
+  void didUpdateWidget(covariant StaffLoginPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedDepartment != widget.selectedDepartment) {
+      _errorMessage = null;
+    }
+  }
+
+  void _clearError() {
+    if (_errorMessage != null) {
+      setState(() => _errorMessage = null);
+    }
+  }
 
   @override
   void dispose() {
+    _emailCtrl.removeListener(_clearError);
+    _passwordCtrl.removeListener(_clearError);
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
 
   void _handleBack() {
+    _errorMessage = null;
     if (widget.onBack != null) {
       widget.onBack!();
     } else if (Navigator.canPop(context)) {
@@ -44,33 +69,67 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
     }
   }
 
+  String _formatErrorMessage(String rawMsg) {
+    final lower = rawMsg.toLowerCase();
+    final isDeptError = lower.contains('department') ||
+        lower.contains('workspace') ||
+        lower.contains('division') ||
+        lower.contains('belongs to') ||
+        lower.contains('registered under') ||
+        lower.contains('mismatch') ||
+        lower.contains('restricted') ||
+        lower.contains('cannot sign in');
+
+    if (isDeptError) {
+      final selectedLower = widget.selectedDepartment.toLowerCase();
+      final isSelectedTech = selectedLower.contains('tech');
+      final isSelectedTele =
+          selectedLower.contains('tele') || selectedLower.contains('call');
+
+      if (lower.contains('telecalling') || lower.contains('telecall')) {
+        return 'This account is registered under the Telecalling department. Please switch to the Telecalling workspace to sign in.';
+      }
+      if (lower.contains('tech') || lower.contains('engineering')) {
+        return 'This account is registered under the Tech department. Please switch to the Tech workspace to sign in.';
+      }
+
+      if (isSelectedTech) {
+        return 'This account is registered under the Telecalling department. Please switch to the Telecalling workspace to sign in.';
+      } else if (isSelectedTele) {
+        return 'This account is registered under the Tech department. Please switch to the Tech workspace to sign in.';
+      }
+    }
+
+    return rawMsg;
+  }
+
   Future<void> _submit() async {
     if (_busy) return;
     final email    = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
     if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
-      _snack('Please enter a valid work email.');
+      setState(() => _errorMessage = 'Please enter a valid work email.');
       return;
     }
     if (password.trim().isEmpty) {
-      _snack('Please enter your password.');
+      setState(() => _errorMessage = 'Please enter your password.');
       return;
     }
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _errorMessage = null;
+    });
     try {
       final code = _workMode == 'Office' ? 'OFFICE' : 'WORK_FROM_HOME';
       await widget.onSignIn(email, password, code);
     } catch (e) {
-      if (mounted) _snack(e.toString().replaceFirst('Exception: ', ''));
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      if (mounted) {
+        setState(() => _errorMessage = _formatErrorMessage(msg));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-  }
-
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
   }
 
   // ── dept label mapping ──
@@ -263,19 +322,93 @@ class _StaffLoginPageState extends State<StaffLoginPage> {
               _WorkPill(
                 label: 'Office',
                 selected: _workMode == 'Office',
-                onTap: _busy ? null : () => setState(() => _workMode = 'Office'),
+                onTap: _busy
+                    ? null
+                    : () => setState(() {
+                          _workMode = 'Office';
+                          _errorMessage = null;
+                        }),
               ),
               const SizedBox(width: 6),
               // Remote pill
               _WorkPill(
                 label: 'Remote',
                 selected: _workMode == 'Work From Home',
-                onTap: _busy ? null : () => setState(() => _workMode = 'Work From Home'),
+                onTap: _busy
+                    ? null
+                    : () => setState(() {
+                          _workMode = 'Work From Home';
+                          _errorMessage = null;
+                        }),
               ),
             ],
           ),
         ),
         const SizedBox(height: 20),
+
+        if (_errorMessage != null && _errorMessage!.isNotEmpty) ...[
+          Builder(builder: (context) {
+            final isWorkspaceRestricted = _errorMessage!.contains('workspace') ||
+                _errorMessage!.contains('department') ||
+                _errorMessage!.contains('registered under');
+            return Container(
+              key: const ValueKey('login_error_banner'),
+              margin: const EdgeInsets.only(bottom: 18),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xfffff8f1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xfffed7aa), width: 1),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(
+                      Icons.info_outline_rounded,
+                      color: Color(0xffea580c),
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          isWorkspaceRestricted
+                              ? 'Workspace Access Restricted'
+                              : 'Unable to Sign In',
+                          style: const TextStyle(
+                            fontFamily: 'Plus Jakarta Sans',
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xff7c2d12),
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _errorMessage!,
+                          key: const ValueKey('login_error_message'),
+                          style: const TextStyle(
+                            fontFamily: 'Plus Jakarta Sans',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w400,
+                            color: Color(0xff9a3412),
+                            height: 1.45,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
 
         // ── EMAIL ──
         const _FieldLabel(text: 'EMAIL'),

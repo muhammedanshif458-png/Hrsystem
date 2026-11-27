@@ -129,13 +129,34 @@ class _AppPagesState extends State<_AppPages> {
         }),
         onSignIn: (email, password, workMode) async {
           final staff = await _repository.signIn(email, password,
-              workMode: workMode);
+              workMode: workMode, department: _selectedDepartment);
           final savedWorkMode = await TokenStorage.getWorkMode();
           final displayWorkMode =
               savedWorkMode == 'WORK_FROM_HOME' ? 'Work From Home' : 'Office';
           if (staff.role != Role.staff) {
             _repository.signOut();
             throw Exception('Not a staff account.');
+          }
+          if (_selectedDepartment != null &&
+              _selectedDepartment!.trim().isNotEmpty) {
+            final selectedKey = canonicalDepartmentKey(_selectedDepartment);
+            final userKey = canonicalDepartmentKey(staff.department);
+            final matches = (selectedKey.isNotEmpty && selectedKey == userKey) ||
+                staff.department.trim().toLowerCase() ==
+                    _selectedDepartment!.trim().toLowerCase();
+            if (!matches) {
+              _repository.signOut();
+              await TokenStorage.clearTokens();
+              final actualDept = userKey == 'tech'
+                  ? 'Tech'
+                  : (userKey == 'telecalling'
+                      ? 'Telecalling'
+                      : (staff.department.isNotEmpty
+                          ? staff.department
+                          : 'another'));
+              throw Exception(
+                  'This account is registered under the $actualDept department. Please switch to the $actualDept workspace to sign in.');
+            }
           }
           await _repository.recordStaffSignIn(StaffSignInRecord(
             staffId: staff.id,

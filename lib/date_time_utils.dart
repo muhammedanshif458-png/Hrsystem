@@ -52,4 +52,29 @@ abstract class DateTimeUtils {
       return false;
     }
   }
+
+  /// Returns a time-based greeting based on current local time:
+  /// - 12:00 AM – 11:59 AM (`hour < 12`): 'Good Morning'
+  /// - 12:00 PM – 4:59 PM (`hour >= 12 && hour < 17`): 'Good Afternoon'
+  /// - 5:00 PM – 11:59 PM (`hour >= 17`): 'Good Evening'
+  static String getTimeBasedGreeting([DateTime? now]) =>
+      getTimeBasedGreetingFunction(now);
 }
+
+/// Computes the time-based greeting for StaffHub:
+/// - 12:00 AM – 11:59 AM (`hour < 12`): 'Good Morning'
+/// - 12:00 PM – 4:59 PM (`hour >= 12 && hour < 17`): 'Good Afternoon'
+/// - 5:00 PM – 11:59 PM (`hour >= 17`): 'Good Evening'
+String getTimeBasedGreeting([DateTime? now]) {
+  final current = now ?? DateTime.now();
+  if (current.hour < 12) {
+    return 'Good Morning';
+  } else if (current.hour < 17) {
+    return 'Good Afternoon';
+  } else {
+    return 'Good Evening';
+  }
+}
+
+String getTimeBasedGreetingFunction([DateTime? now]) =>
+    getTimeBasedGreeting(now);
