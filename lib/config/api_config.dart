@@ -58,8 +58,10 @@ class ApiConfig {
   }
 
   // ── TIMEOUTS ──────────────────────────────────────────────────────────────
-  static const Duration connectTimeout = Duration(seconds: 15);
-  static const Duration receiveTimeout = Duration(seconds: 30);
+  // The hosted backend (Render free plan) sleeps when idle and can take up to
+  // ~60s to wake, so allow enough time for the first request after a quiet period.
+  static const Duration connectTimeout = Duration(seconds: 30);
+  static const Duration receiveTimeout = Duration(seconds: 70);
 
   // ── DEFAULT HEADERS ───────────────────────────────────────────────────────
   static const Map<String, String> defaultHeaders = {
