@@ -1,14 +1,24 @@
 // ─── lib/config/api_config.dart ───────────────────────────────────────────────
 // Central configuration for all backend API settings.
-// Configured to point to the local HR system backend (default: http://127.0.0.1:5000/api).
+// Release builds use the live Render backend; `flutter run` uses http://127.0.0.1:5000/api.
+// Override either with --dart-define=API_BASE_URL=...
 // ─────────────────────────────────────────────────────────────────────────────
+
+import 'package:flutter/foundation.dart' show kReleaseMode;
 
 class ApiConfig {
   // ── BASE URL ──────────────────────────────────────────────────────────────
-  static const String _defaultUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:5000/api',
-  );
+  /// Value passed at build time with `--dart-define=API_BASE_URL=...` (optional).
+  static const String _envUrl = String.fromEnvironment('API_BASE_URL');
+
+  /// Live backend on Render, used by release builds (web on Render, APK).
+  static const String productionUrl = 'https://hrsystembackend-4xzs.onrender.com/api';
+
+  /// Local backend, used by `flutter run` during development.
+  static const String localUrl = 'http://127.0.0.1:5000/api';
+
+  static String get _defaultUrl =>
+      _envUrl.isNotEmpty ? _envUrl : (kReleaseMode ? productionUrl : localUrl);
 
   static String? _overrideUrl;
 
