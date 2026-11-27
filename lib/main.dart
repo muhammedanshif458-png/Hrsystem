@@ -49,7 +49,7 @@ class _StaffHubAppState extends State<StaffHubApp> {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'StaffHub',
+        title: 'LY Staff',
         debugShowCheckedModeBanner: false,
         themeMode: _themeMode,
         theme: staffHubThemeData(ThemeMode.light),
