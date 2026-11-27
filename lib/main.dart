@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'api_list.dart';
 import 'hr_repository.dart';
 import 'login_screen.dart';
 import 'models.dart';
@@ -59,9 +58,6 @@ class _StaffHubAppState extends State<StaffHubApp> {
           themeMode: _themeMode,
           onThemeModeChanged: _onThemeChanged,
         ),
-        routes: {
-          ApiListPage.routeName: (_) => const ApiListPage(),
-        },
       );
 }
 

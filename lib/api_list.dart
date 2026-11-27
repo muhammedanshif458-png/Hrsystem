@@ -1,7 +1,7 @@
 // ─── lib/api_list.dart ──────────────────────────────────────────────────────
 // "API List" page for the Staff app: every backend API this app calls,
 // grouped by category, with the live base URL at the top.
-// Open it at <site>/#/api-list
+// Developer reference only: not registered as a route, so users never see it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
@@ -70,8 +70,6 @@ const List<ApiCategory> staffApiCategories = [
 
 class ApiListPage extends StatefulWidget {
   const ApiListPage({super.key});
-
-  static const String routeName = '/api-list';
 
   @override
   State<ApiListPage> createState() => _ApiListPageState();
