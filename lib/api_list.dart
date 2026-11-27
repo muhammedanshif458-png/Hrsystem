@@ -1,262 +1,124 @@
-// ─── lib/api_list.dart ──────────────────────────────────────────────────────
-// "API List" page for the Staff app: every backend API this app calls,
-// grouped by category, with the live base URL at the top.
-// Developer reference only: not registered as a route, so users never see it.
-// ─────────────────────────────────────────────────────────────────────────────
-
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// ═════════════════════════════════════════════════════════════════════════════
+//  API LIST — STAFF APP
+//
+//  BASE URL
+//    Live (release build) : https://hrsystembackend-4xzs.onrender.com
+//    Local (flutter run)  : http://127.0.0.1:5000
+//    Override             : --dart-define=API_BASE_URL=...
+//
+//  Every backend API used by the Staff app, separated by category.
+//  Full URL = ApiList.baseUrl + path   →   ApiList.url(AttendanceApis.checkIn)
+//  `:id` style parameters are functions, e.g. LeaveApis.byId(id).
+// ═════════════════════════════════════════════════════════════════════════════
 
 import 'config/api_config.dart';
 
-class ApiEndpoint {
-  const ApiEndpoint(this.method, this.path, this.description, {this.onBackend = true});
+/// Base URL of the backend (live on Render in release builds).
+class ApiList {
+  ApiList._();
 
-  final String method;
-  final String path;
-  final String description;
+  /// e.g. https://hrsystembackend-4xzs.onrender.com
+  static String get baseUrl => ApiConfig.socketUrl;
 
-  /// false when the dashboard has code for it but the backend has no such route.
-  final bool onBackend;
+  /// e.g. https://hrsystembackend-4xzs.onrender.com/api
+  static String get apiUrl => ApiConfig.baseUrl;
+
+  /// Builds a full URL from a path in this file.
+  static String url(String path) => '$baseUrl$path';
+
+  /// Builds a full Uri, with optional query parameters.
+  static Uri uri(String path, [Map<String, String>? query]) =>
+      Uri.parse(url(path)).replace(queryParameters: query);
 }
 
-class ApiCategory {
-  const ApiCategory(this.name, this.icon, this.endpoints);
+// ─── 1. AUTHENTICATION ───────────────────────────────────────────────────────
+class AuthApis {
+  AuthApis._();
 
-  final String name;
-  final IconData icon;
-  final List<ApiEndpoint> endpoints;
+  /// POST — staff login. Body: { email, password, workMode: OFFICE | WORK_FROM_HOME }
+  static const String login = '/api/auth/login';
 }
 
-/// Every API the Staff app calls (from lib/config/api_config.dart + lib/hr_repository.dart).
-const List<ApiCategory> staffApiCategories = [
-  ApiCategory('Authentication', Icons.lock_outline, [
-    ApiEndpoint('POST', '/api/auth/login', 'Staff login (email, password, work mode)'),
-  ]),
-  ApiCategory('Profile', Icons.person_outline, [
-    ApiEndpoint('GET', '/api/staff/profile', 'My profile'),
-    ApiEndpoint('PUT', '/api/staff/profile', 'Update my profile'),
-    ApiEndpoint('GET', '/api/birthdays/today', "Today's birthdays"),
-  ]),
-  ApiCategory('Attendance', Icons.access_time, [
-    ApiEndpoint('POST', '/api/staff/attendance/check-in', 'Check in'),
-    ApiEndpoint('POST', '/api/staff/attendance/check-out', 'Check out'),
-    ApiEndpoint('POST', '/api/staff/attendance/:attendanceId/breaks/start', 'Start break'),
-    ApiEndpoint('POST', '/api/staff/attendance/:attendanceId/breaks/end', 'End break'),
-    ApiEndpoint('GET', '/api/staff/attendance', 'My attendance history'),
-    ApiEndpoint('GET', '/api/staff/attendance/:attendanceId', 'Attendance details'),
-    ApiEndpoint('DELETE', '/api/staff/attendance/history', 'Clear my history (hidden only, kept in DB)'),
-    ApiEndpoint('POST', '/api/staff/attendance/clear-history', 'Clear my history (fallback)'),
-  ]),
-  ApiCategory('Leaves', Icons.event_busy_outlined, [
-    ApiEndpoint('GET', '/api/staff/leaves', 'My leave requests'),
-    ApiEndpoint('POST', '/api/staff/leaves', 'Apply leave (with optional attachment)'),
-    ApiEndpoint('DELETE', '/api/staff/leaves/:id', 'Cancel leave'),
-    ApiEndpoint('GET', '/api/staff/documents/:id/download', 'Download leave / medical document'),
-  ]),
-  ApiCategory('Daily Updates', Icons.edit_note, [
-    ApiEndpoint('GET', '/api/staff/daily-updates', 'My daily updates'),
-    ApiEndpoint('POST', '/api/staff/daily-updates', 'Submit daily update'),
-  ]),
-  ApiCategory('Department Chat', Icons.forum_outlined, [
-    ApiEndpoint('GET', '/api/staff/departments/:deptKey/messages', 'Department messages'),
-    ApiEndpoint('GET', '/api/staff/departments/:deptKey/messages/search', 'Search messages'),
-    ApiEndpoint('POST', '/api/staff/departments/:deptKey/messages', 'Send message'),
-    ApiEndpoint('POST', '/api/staff/departments/:deptKey/messages/clear', 'Clear chat'),
-    ApiEndpoint('PATCH', '/api/staff/departments/:deptKey/messages/:messageId/delete-for-me', 'Delete for me'),
-    ApiEndpoint('DELETE', '/api/staff/departments/:deptKey/messages/:messageId', 'Delete for everyone'),
-  ]),
-];
+// ─── 2. PROFILE ──────────────────────────────────────────────────────────────
+class ProfileApis {
+  ProfileApis._();
 
-class ApiListPage extends StatefulWidget {
-  const ApiListPage({super.key});
+  /// GET — my profile | PUT — update my profile
+  static const String profile = '/api/staff/profile';
 
-  @override
-  State<ApiListPage> createState() => _ApiListPageState();
+  /// GET — today's birthdays
+  static const String birthdaysToday = '/api/birthdays/today';
 }
 
-class _ApiListPageState extends State<ApiListPage> {
-  String _query = '';
+// ─── 3. ATTENDANCE ───────────────────────────────────────────────────────────
+class AttendanceApis {
+  AttendanceApis._();
 
-  String get _baseUrl => ApiConfig.socketUrl;
+  /// POST — check in
+  static const String checkIn = '/api/staff/attendance/check-in';
 
-  void _copy(String text) {
-    Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text('Copied: $text'), duration: const Duration(seconds: 2)));
-  }
+  /// POST — check out
+  static const String checkOut = '/api/staff/attendance/check-out';
 
-  @override
-  Widget build(BuildContext context) {
-    final q = _query.trim().toLowerCase();
-    final categories = staffApiCategories
-        .map((c) => ApiCategory(
-              c.name,
-              c.icon,
-              c.endpoints
-                  .where((e) =>
-                      q.isEmpty ||
-                      e.path.toLowerCase().contains(q) ||
-                      e.method.toLowerCase().contains(q) ||
-                      e.description.toLowerCase().contains(q) ||
-                      c.name.toLowerCase().contains(q))
-                  .toList(),
-            ))
-        .where((c) => c.endpoints.isNotEmpty)
-        .toList();
-    final total = staffApiCategories.fold<int>(0, (n, c) => n + c.endpoints.length);
+  /// POST — start break
+  static String breakStart(String attendanceId) => '/api/staff/attendance/$attendanceId/breaks/start';
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('API List — Staff App')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _BaseUrlCard(baseUrl: _baseUrl, total: total, onCopy: _copy),
-          const SizedBox(height: 12),
-          TextField(
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: 'Search API (path, method, description)',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            onChanged: (v) => setState(() => _query = v),
-          ),
-          const SizedBox(height: 12),
-          for (final c in categories)
-            _CategoryCard(category: c, baseUrl: _baseUrl, onCopy: _copy, expanded: q.isNotEmpty),
-          if (categories.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: Text('No API matches your search.')),
-            ),
-        ],
-      ),
-    );
-  }
+  /// POST — end break
+  static String breakEnd(String attendanceId) => '/api/staff/attendance/$attendanceId/breaks/end';
+
+  /// GET — my attendance history
+  static const String attendance = '/api/staff/attendance';
+
+  /// GET — attendance details
+  static String byId(String attendanceId) => '/api/staff/attendance/$attendanceId';
+
+  /// DELETE — clear my history (hidden for me only, kept in DB for HR)
+  static const String clearHistory = '/api/staff/attendance/history';
+
+  /// POST — clear my history (fallback)
+  static const String clearHistoryPost = '/api/staff/attendance/clear-history';
 }
 
-class _BaseUrlCard extends StatelessWidget {
-  const _BaseUrlCard({required this.baseUrl, required this.total, required this.onCopy});
+// ─── 4. LEAVES ───────────────────────────────────────────────────────────────
+class LeaveApis {
+  LeaveApis._();
 
-  final String baseUrl;
-  final int total;
-  final ValueChanged<String> onCopy;
+  /// GET — my leave requests | POST — apply leave (optional attachment, multipart)
+  static const String leaves = '/api/staff/leaves';
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Base URL', style: theme.textTheme.labelLarge),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Expanded(
-                  child: SelectableText(
-                    baseUrl,
-                    style: theme.textTheme.titleMedium?.copyWith(fontFamily: 'monospace'),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Copy base URL',
-                  icon: const Icon(Icons.copy, size: 20),
-                  onPressed: () => onCopy(baseUrl),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '$total APIs • full URL = Base URL + path • tap an API to copy its full URL',
-              style: theme.textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  /// DELETE — cancel leave
+  static String byId(String id) => '/api/staff/leaves/$id';
+
+  /// GET — download leave / medical document
+  static String documentDownload(String docId) => '/api/staff/documents/$docId/download';
 }
 
-class _CategoryCard extends StatelessWidget {
-  const _CategoryCard({
-    required this.category,
-    required this.baseUrl,
-    required this.onCopy,
-    required this.expanded,
-  });
+// ─── 5. DAILY UPDATES ────────────────────────────────────────────────────────
+class DailyUpdateApis {
+  DailyUpdateApis._();
 
-  final ApiCategory category;
-  final String baseUrl;
-  final ValueChanged<String> onCopy;
-  final bool expanded;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      clipBehavior: Clip.antiAlias,
-      child: ExpansionTile(
-        key: PageStorageKey('${category.name}-$expanded'),
-        initiallyExpanded: expanded,
-        leading: Icon(category.icon),
-        title: Text(category.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-        trailing: Chip(label: Text('${category.endpoints.length}'), visualDensity: VisualDensity.compact),
-        children: [
-          for (final e in category.endpoints) _EndpointTile(endpoint: e, baseUrl: baseUrl, onCopy: onCopy),
-        ],
-      ),
-    );
-  }
+  /// GET — my daily updates | POST — submit daily update
+  static const String dailyUpdates = '/api/staff/daily-updates';
 }
 
-class _EndpointTile extends StatelessWidget {
-  const _EndpointTile({required this.endpoint, required this.baseUrl, required this.onCopy});
+// ─── 6. DEPARTMENT CHAT ──────────────────────────────────────────────────────
+class ChatApis {
+  ChatApis._();
 
-  final ApiEndpoint endpoint;
-  final String baseUrl;
-  final ValueChanged<String> onCopy;
+  /// GET — department messages | POST — send message
+  static String messages(String deptKey) => '/api/staff/departments/$deptKey/messages';
 
-  static const Map<String, Color> _methodColors = {
-    'GET': Color(0xff16a34a),
-    'POST': Color(0xff2563eb),
-    'PUT': Color(0xffd97706),
-    'PATCH': Color(0xff7c3aed),
-    'DELETE': Color(0xffdc2626),
-  };
+  /// GET — search messages
+  static String search(String deptKey) => '/api/staff/departments/$deptKey/messages/search';
 
-  @override
-  Widget build(BuildContext context) {
-    final color = _methodColors[endpoint.method] ?? Colors.grey;
-    return ListTile(
-      dense: true,
-      onTap: () => onCopy('$baseUrl${endpoint.path}'),
-      leading: Container(
-        width: 64,
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
-        child: Text(
-          endpoint.method,
-          textAlign: TextAlign.center,
-          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
-        ),
-      ),
-      title: Text(endpoint.path, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
-      subtitle: Text(endpoint.description),
-      trailing: endpoint.onBackend
-          ? const Icon(Icons.copy, size: 16)
-          : const Tooltip(
-              message: 'The app has code for this, but the backend has no such route',
-              child: Chip(
-                label: Text('Not on backend', style: TextStyle(fontSize: 11)),
-                backgroundColor: Color(0xfffff7ed),
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
-    );
-  }
+  /// POST — clear chat
+  static String clear(String deptKey) => '/api/staff/departments/$deptKey/messages/clear';
+
+  /// DELETE — delete for everyone
+  static String message(String deptKey, String messageId) =>
+      '/api/staff/departments/$deptKey/messages/$messageId';
+
+  /// PATCH — delete for me
+  static String deleteForMe(String deptKey, String messageId) =>
+      '/api/staff/departments/$deptKey/messages/$messageId/delete-for-me';
 }
