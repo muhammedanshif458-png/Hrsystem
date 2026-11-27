@@ -62,7 +62,7 @@ class ApiException implements Exception {
 
   /// Request timed out
   factory ApiException.timeout() => const ApiException(
-        message: 'The request timed out. Please try again.',
+        message: 'The server is taking too long to respond (it may be waking up). Please wait a moment and try again.',
         statusCode: null,
       );
 
